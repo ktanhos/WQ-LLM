@@ -26,7 +26,39 @@ Luồng dữ liệu chạy một chiều:
 4. Bộ kiểm tra tương quan chỉ chạy trên nhóm `PASSED` vì mỗi lần gọi tốn tài nguyên máy chủ.
 5. Giao diện web đọc trực tiếp SQLite, không giữ trạng thái riêng, nên có thể mở nhiều tab hoặc tắt đi bật lại tùy ý.
 
-## 2. Cài đặt
+## 2. Research Layer
+
+Alpha Forge đang được mở rộng từ một pipeline tạo và kiểm tra alpha thành một hệ thống ghi nhớ quá trình nghiên cứu.
+
+Giai đoạn một bổ sung bốn khái niệm:
+
+```text
+Research Project
+      ↓
+Hypothesis
+      ↓
+Experiment
+      ↓
+Experiment Variant
+```
+
+Đồng thời có bảng `alpha_lineage` để ghi quan hệ cha con giữa các alpha.
+
+Các mô hình nằm trong `research_models.py` và kho SQLite độc lập nằm trong `research_store.py`. Thiết kế này cố ý chưa thay đổi pipeline BRAIN hiện tại, để lớp nghiên cứu có thể được kiểm thử độc lập trước khi tích hợp vào kho alpha chính.
+
+Ví dụ:
+
+```bash
+python research_cli.py init --db data/research.db
+python research_cli.py project-create --db data/research.db --name "Momentum Volume" --family "Momentum"
+python research_cli.py project-list --db data/research.db
+python research_cli.py hypothesis-create --db data/research.db --research-id 1 --statement "Momentum mạnh hơn khi volume xác nhận biến động giá."
+python research_cli.py experiment-create --db data/research.db --hypothesis-id 1 --name "Lookback test" --variable "lookback"
+```
+
+Lớp này chưa gọi BRAIN và chưa sinh expression. Mục tiêu là tạo được trí nhớ nghiên cứu trước, sau đó nối `Experiment` vào `GeneratorEngine`.
+
+## 3. Cài đặt
 
 ```bash
 git clone <địa chỉ kho>
@@ -39,7 +71,7 @@ cp .env.example .env
 
 Điền tài khoản BRAIN vào tệp `.env`. Tệp này đã nằm trong `.gitignore`.
 
-## 3. Sử dụng
+## 4. Sử dụng
 
 Kiểm tra kết nối và hạn mức tài khoản:
 
@@ -85,7 +117,7 @@ Mở bảng theo dõi:
 python -m alphaforge.cli web --port 8000
 ```
 
-## 4. Nguyên tắc vận hành
+## 5. Nguyên tắc vận hành
 
 Tài khoản BRAIN có hạn mức mô phỏng đồng thời theo cấp bậc người dùng. Đặt `concurrency` vượt hạn mức sẽ khiến máy chủ trả về lỗi 429 và toàn bộ hàng đợi bị chậm lại. Giá trị mặc định là 3 và nên tăng dần sau khi quan sát thực tế.
 
@@ -95,7 +127,7 @@ Bộ chấm điểm không thay thế phán đoán của người nghiên cứu.
 
 Tự tương quan cao là nguyên nhân bị loại phổ biến hơn cả chỉ số kém. Nên chạy bước `correlate` trước khi cân nhắc nộp bất kỳ biểu thức nào.
 
-## 5. Giới hạn đã biết
+## 6. Giới hạn đã biết
 
 Dự án không đóng gói bộ mô phỏng riêng. Mọi chỉ số đều lấy từ máy chủ BRAIN, do đó không thể chạy ngoại tuyến.
 
@@ -103,6 +135,14 @@ Bộ sinh dựa trên mẫu và tổ hợp toán tử, không dựa trên mô h�
 
 Cấu trúc điểm cuối của BRAIN do bên thứ ba vận hành và có thể thay đổi mà không báo trước. Khi một lệnh trả về lỗi phân tích dữ liệu, cần kiểm tra lại tài liệu API trước khi sửa mã.
 
-## 6. Giấy phép
+## 7. Kiểm thử
+
+Giai đoạn một có kiểm thử độc lập cho vòng đời Research Project → Hypothesis → Experiment → Variant và alpha lineage:
+
+```bash
+pytest test_research.py
+```
+
+## 8. Giấy phép
 
 MIT. Xem tệp LICENSE.
