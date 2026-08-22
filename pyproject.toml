@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alpha-forge"
-version = "0.1.0"
-description = "Quy trình tạo, mô phỏng, chấm điểm và lọc alpha trên nền tảng WorldQuant BRAIN"
+version = "0.2.0"
+description = "Quy trình nghiên cứu, mô phỏng, chấm điểm và ghi nhớ alpha trên nền tảng WorldQuant BRAIN"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -16,11 +16,13 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "jinja2>=3.1.0",
-    "pandas>=2.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+dev = ["pytest>=7.4", "httpx>=0.27"]
+# Mô hình ngôn ngữ là tùy chọn. Không cài nhóm này thì toàn bộ quy trình
+# nghiên cứu vẫn chạy đầy đủ, chỉ thiếu phần diễn giải bằng văn xuôi.
+llm = ["anthropic>=0.39"]
 
 [project.scripts]
 alphaforge = "alphaforge.cli:main"
@@ -29,8 +31,11 @@ alphaforge = "alphaforge.cli:main"
 include = ["alphaforge*"]
 
 [tool.setuptools.package-data]
-alphaforge = ["web/templates/*.html"]
+"alphaforge.web" = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Thư mục tests nằm trên đường dẫn nhập để các tệp kiểm thử dùng chung được
+# đồ giả lập khai báo trong conftest.
+pythonpath = [".", "tests"]

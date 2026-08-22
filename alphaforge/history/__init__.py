@@ -1,10 +1,17 @@
-"""Historical alpha intelligence package."""
+"""Lớp trí nhớ nghiên cứu: nhập và phân tích lịch sử alpha đã nộp trên BRAIN."""
 
-from .submitted import get_submitted_alphas
-from .importer import ensure_table, upsert_submitted_alphas
+from .analyzer import analyze, summarize
+from .fingerprint import compare, family_of, fingerprint, find_duplicates, template_of
+from .scanner import HistoricalAlphaScanner, fetch_submitted_alphas
 
 __all__ = [
-    "get_submitted_alphas",
-    "ensure_table",
-    "upsert_submitted_alphas",
+    "HistoricalAlphaScanner",
+    "fetch_submitted_alphas",
+    "analyze",
+    "summarize",
+    "fingerprint",
+    "family_of",
+    "template_of",
+    "compare",
+    "find_duplicates",
 ]

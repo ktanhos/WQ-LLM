@@ -1,14 +1,41 @@
+# Bí mật. Không bao giờ được đưa vào kho mã.
 .env
+.env.*
+!.env.example
+credentials.json
+credentials.txt
+brain_credentials.json
+secrets.yaml
+secrets.yml
+*.key
+*.pem
+*.p12
+*_token
+*_token.json
+.anthropic
+.netrc
+
+# Môi trường Python
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
+dist/
+
+# Dữ liệu cục bộ
 data/
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 *.db
-.cache/
-.pytest_cache/
 *.csv
 !tests/fixtures/*.csv
+
+# Bộ nhớ đệm công cụ
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .DS_Store
