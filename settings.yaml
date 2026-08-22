@@ -1,0 +1,59 @@
+# Cấu hình mặc định cho Alpha Forge.
+# Mọi giá trị ở đây đều có thể ghi đè bằng tham số dòng lệnh.
+
+api:
+  base_url: https://api.worldquantbrain.com
+  request_timeout: 60
+  max_retries: 4
+  backoff_seconds: 5
+  # Hạn mức mô phỏng đồng thời phụ thuộc cấp bậc tài khoản.
+  # Đặt cao hơn hạn mức thực tế sẽ sinh lỗi 429 và làm chậm toàn bộ hàng đợi.
+  concurrency: 3
+  poll_interval: 5
+  poll_timeout: 900
+
+simulation:
+  type: REGULAR
+  settings:
+    instrumentType: EQUITY
+    region: USA
+    universe: TOP3000
+    delay: 1
+    decay: 0
+    neutralization: SUBINDUSTRY
+    truncation: 0.08
+    pasteurization: "ON"
+    unitHandling: VERIFY
+    nanHandling: "OFF"
+    language: FASTEXPR
+    visualization: false
+    testPeriod: P0Y0M
+
+# Ngưỡng chấm điểm. Đây là mức tham khảo theo tiêu chí nộp thông thường,
+# cần đối chiếu lại tài liệu chính thức trước mỗi đợt nộp.
+scoring:
+  min_sharpe: 1.25
+  min_fitness: 1.0
+  min_turnover: 0.01
+  max_turnover: 0.70
+  max_drawdown: 0.50
+  min_margin_bps: 5.0
+  min_long_count: 100
+  min_short_count: 100
+  require_pass_all_checks: false
+  weights:
+    sharpe: 0.45
+    fitness: 0.35
+    margin: 0.10
+    turnover_penalty: 0.10
+
+correlation:
+  max_self_correlation: 0.70
+  max_prod_correlation: 0.70
+  batch_pause_seconds: 2
+
+generator:
+  default_decay_choices: [0, 5, 10, 20]
+  default_truncation_choices: [0.01, 0.05, 0.08]
+  neutralization_choices: [SUBINDUSTRY, INDUSTRY, SECTOR, MARKET]
+  max_expression_length: 480
