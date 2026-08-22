@@ -1,12 +1,12 @@
 """Command line entry point for historical submitted-alpha scanning."""
-
 from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 
-from ...client import BrainClient
-from ...config import load_settings
+from client import BrainClient
+from config import load_settings
 from .analyzer import summarize
 from .scanner import HistoricalAlphaScanner
 
@@ -24,27 +24,17 @@ def main(argv: list[str] | None = None) -> int:
     scanner = HistoricalAlphaScanner(client, settings.db_path)
     result = scanner.scan(args.start_date, args.end_date)
 
-    import sqlite3
-    connection = sqlite3.connect(settings.db_path)
-    try:
-        rows = [
-            dict(zip(
-                ["alpha_id", "submitted", "status", "region", "universe", "delay",
-                 "expression", "sharpe", "fitness", "returns", "turnover", "margin"],
-                row,
-            ))
-            for row in connection.execute(
-                """SELECT alpha_id, submitted, status, region, universe, delay,
-                          expression, sharpe, fitness, returns, turnover, margin
-                   FROM historical_alphas
-                   WHERE (? IS NULL OR submitted >= ?)
-                     AND (? IS NULL OR submitted <= ?)
-                   ORDER BY submitted DESC""",
-                (args.start_date, args.start_date, args.end_date, args.end_date),
-            )
-        ]
-    finally:
-        connection.close()
+    with sqlite3.connect(settings.db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = [dict(row) for row in connection.execute(
+            """SELECT alpha_id, submitted, status, region, universe, delay,
+                      expression, sharpe, fitness, returns, turnover, margin
+               FROM historical_alphas
+               WHERE (? IS NULL OR submitted >= ?)
+                 AND (? IS NULL OR submitted <= ?)
+               ORDER BY submitted DESC""",
+            (args.start_date, args.start_date, args.end_date, args.end_date),
+        ).fetchall()]
 
     result["summary"] = summarize(rows)
     print(json.dumps(result, ensure_ascii=False, indent=2))
