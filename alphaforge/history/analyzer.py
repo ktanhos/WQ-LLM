@@ -292,27 +292,40 @@ def analyze(
 def research_gaps(
     analysis: Dict[str, Any], *, limit: int = 20
 ) -> List[Dict[str, Any]]:
-    """Xếp hạng khoảng trống nghiên cứu đáng khảo sát tiếp.
+    """Xếp hạng họ cấu trúc đáng khảo sát tiếp.
 
-    Ưu tiên họ cấu trúc còn ít alpha nhưng đã cho tín hiệu khả quan. Họ chưa
-    có alpha nào đạt và đã thử nhiều lần bị đẩy xuống cuối.
+    Đây là góc nhìn hẹp, chỉ theo họ cấu trúc, giữ lại vì mã và bảng theo dõi
+    hiện có đang dùng. Bản đầy đủ theo tám chiều nằm ở `research.gap.ResearchGap`.
+
+    Điểm ưu tiên được tính bằng `research.priority.ResearchPriority`, cùng một
+    công thức với phần còn lại của hệ thống. Trước đây chỗ này có công thức
+    riêng, dẫn tới hai nơi trả về hai con số khác nhau cho cùng một họ.
     """
+    # Nhập tại chỗ để lớp lịch sử không phụ thuộc lớp nghiên cứu lúc nạp mô đun.
+    from ..research.priority import ResearchPriority
+
+    engine = ResearchPriority()
     gaps: List[Dict[str, Any]] = []
     for item in analysis.get("distribution", {}).get("family", []):
-        count = item["count"]
         median_sharpe = item["sharpe"]["median"]
         if median_sharpe is None:
             continue
-        # Điểm cao khi cỡ mẫu nhỏ mà trung vị đã khá. Chia cho căn của cỡ mẫu
-        # để họ đã thử nhiều lần không tiếp tục được đề xuất.
-        score = abs(median_sharpe) / (count ** 0.5)
+        score = engine.score(
+            str(item["family"]),
+            dimension="family",
+            sample_size=item["count"],
+            median_sharpe=median_sharpe,
+            pass_rate=item.get("pass_rate", 0.0),
+        )
         gaps.append(
             {
                 "family": item["family"],
-                "count": count,
+                "count": item["count"],
                 "median_sharpe": median_sharpe,
-                "pass_rate": item["pass_rate"],
-                "priority": round(score, 6),
+                "pass_rate": item.get("pass_rate", 0.0),
+                "priority": score.score,
+                "reasons": score.reasons,
+                "confidence": score.confidence,
             }
         )
     gaps.sort(key=lambda item: item["priority"], reverse=True)

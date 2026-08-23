@@ -16,8 +16,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from ..config import Settings, load_settings
 from ..history.analyzer import analyze, research_gaps
 from ..history.report import build_report, load_history
+from ..research.gap import ResearchGap
+from ..research.memory import ResearchMemory
+from ..research.priority import ResearchPriority
+from ..research.report import ExperimentReport
 from ..research.store import ResearchStore
-from ..storage.db import Database, Status
+from ..storage.db import Database, EvaluationStatus, Status
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "index.html"
 
@@ -26,7 +30,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or load_settings()
     db = Database(settings.db_path)
     research = ResearchStore(db)
-    app = FastAPI(title="Alpha Forge", version="0.2.0")
+    memory = ResearchMemory(db)
+    app = FastAPI(title="Alpha Research Hub", version="0.3.0")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
@@ -151,6 +156,103 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         finally:
             connection.close()
         return JSONResponse({"items": [dict(row) for row in rows]})
+
+    @app.get("/api/research/coverage")
+    def coverage() -> JSONResponse:
+        """Độ phủ nghiên cứu trên chín chiều."""
+        return JSONResponse(
+            {
+                dimension: dict(counter.most_common(50))
+                for dimension, counter in memory.coverage().items()
+            }
+        )
+
+    @app.get("/api/research/gaps/detailed")
+    def detailed_gaps(limit: int = Query(30, ge=1, le=200)) -> JSONResponse:
+        """Thiếu hụt theo tám loại, kèm lý do và độ ưu tiên."""
+        gaps = ResearchGap(memory).find(limit_per_kind=limit)
+        return JSONResponse({"items": [gap.as_dict() for gap in gaps[:limit]]})
+
+    @app.get("/api/research/priorities")
+    def priorities(
+        dimension: str = Query("family"),
+        limit: int = Query(20, ge=1, le=200),
+    ) -> JSONResponse:
+        """Xếp hạng vùng nghiên cứu, mỗi điểm kèm lý do."""
+        engine = ResearchPriority()
+        profiles = memory.profiles()
+        scores = [
+            engine.score(
+                key, dimension=dimension, sample_size=count,
+                median_sharpe=profiles[key].median_sharpe if key in profiles else None,
+                pass_rate=profiles[key].pass_rate if key in profiles else 0.0,
+            )
+            for key, count in memory.coverage()[dimension].items()
+        ]
+        return JSONResponse(
+            {"items": [score.as_dict() for score in engine.rank(scores, limit=limit)]}
+        )
+
+    @app.get("/api/experiments")
+    def experiments() -> JSONResponse:
+        connection = db.connect()
+        try:
+            rows = [dict(row) for row in connection.execute(
+                "SELECT id, hypothesis_id, name, variable_changed, status,"
+                " base_expression, created_at FROM experiments ORDER BY id DESC"
+            ).fetchall()]
+        finally:
+            connection.close()
+        for row in rows:
+            row["outcome"] = memory.experiment_outcome(int(row["id"]))
+        return JSONResponse({"items": rows})
+
+    @app.get("/api/experiments/{experiment_id}/report")
+    def experiment_report(experiment_id: int) -> JSONResponse:
+        try:
+            return JSONResponse(ExperimentReport(db).build(experiment_id))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    @app.get("/api/alphas")
+    def alphas(
+        status: Optional[str] = Query(None),
+        experiment_id: Optional[int] = Query(None),
+        limit: int = Query(100, ge=1, le=1000),
+    ) -> JSONResponse:
+        """Tra cứu alpha, lọc theo trạng thái hoặc thí nghiệm."""
+        query = (
+            "SELECT id, alpha_id, expression, status, evaluation_status, score,"
+            " metrics_json, family, experiment_id, variant_id, self_correlation,"
+            " reject_reason, validation_error FROM alphas WHERE 1 = 1"
+        )
+        params: list = []
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if experiment_id is not None:
+            query += " AND experiment_id = ?"
+            params.append(int(experiment_id))
+        query += " ORDER BY COALESCE(score, -999) DESC, id DESC LIMIT ?"
+        params.append(int(limit))
+
+        connection = db.connect()
+        try:
+            rows = [dict(row) for row in connection.execute(query, params).fetchall()]
+        finally:
+            connection.close()
+        import json as _json
+        for row in rows:
+            try:
+                row["metrics"] = _json.loads(row.pop("metrics_json") or "{}")
+            except (TypeError, ValueError):
+                row["metrics"] = {}
+        return JSONResponse({"items": rows})
+
+    @app.get("/api/candidates")
+    def candidates(limit: int = Query(50, ge=1, le=500)) -> JSONResponse:
+        """Alpha đã qua mọi bước tự động, đang chờ người quyết định."""
+        return JSONResponse({"items": memory.candidates(limit=limit)})
 
     @app.get("/api/submissions")
     def submissions(limit: int = Query(50, ge=1, le=500)) -> JSONResponse:

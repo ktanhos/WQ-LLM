@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from ..generator.engine import GenerationRequest, GeneratorEngine
 from ..history.fingerprint import fingerprint
 from ..research.memory import GenerationContext
-from ..research.plan import GenerationPlan
+from ..research.plan import STRATEGY_DIRECT, GenerationPlan
 from ..storage.db import Database, Status
 from .validation import AlphaValidator, ValidationConstraints, validator_from_database
 
@@ -111,24 +111,31 @@ def generate_and_queue(
     tag: str = "",
     dry_run: bool = False,
     store_invalid: bool = True,
+    variant_ids: Optional[Dict[str, int]] = None,
 ) -> GenerationOutcome:
     """Sinh biểu thức theo kế hoạch, kiểm tra, rồi đưa vào hàng đợi.
 
     Trả về `GenerationOutcome` mô tả đầy đủ chuyện gì đã xảy ra. Khi `dry_run`
     bật, không có gì được ghi vào kho.
+
+    `variant_ids` ánh xạ biểu thức sang mã biến thể, dùng khi lô sinh đến từ một
+    thí nghiệm. Nhờ nó báo cáo quy được kết quả về đúng biến thể đã thiết kế.
     """
     plan.validate()
     settings = dict(plan.settings or {})
 
-    engine = GeneratorEngine(request_from_plan(plan, context))
-    expressions = engine.generate()
+    if plan.strategy == STRATEGY_DIRECT:
+        # Biểu thức đã xác định. Không đụng tới bộ sinh, vì bọc thêm toán tử sẽ
+        # làm hỏng thiết kế của thí nghiệm.
+        expressions = list(plan.seed_expressions)[: plan.max_candidates]
+        rejected: Dict[str, int] = {}
+    else:
+        engine = GeneratorEngine(request_from_plan(plan, context))
+        expressions = engine.generate()
+        rejected = {key: value for key, value in engine.rejected.items() if value}
 
     outcome = GenerationOutcome(
-        plan_id=plan.id,
-        generated=len(expressions),
-        rejected_by_memory={
-            key: value for key, value in engine.rejected.items() if value
-        },
+        plan_id=plan.id, generated=len(expressions), rejected_by_memory=rejected,
     )
 
     if validator is None:
@@ -175,6 +182,8 @@ def generate_and_queue(
         outcome.queued = added
         outcome.duplicates = len(accepted) - added
         _stamp_plan_metadata(db, outcome.run_id, plan)
+        if variant_ids:
+            _link_variants(db, outcome.run_id, variant_ids)
 
     if store_invalid and refused:
         # Biểu thức hỏng vẫn được ghi lại: biết nó hỏng ở đâu là thông tin
@@ -243,6 +252,28 @@ def _store_invalid(
                 """,
                 (Status.INVALID, result.reason, plan.id, plan.strategy,
                  result.expression, Status.PENDING),
+            )
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.close()
+
+
+def _link_variants(db: Database, run_id: int, variant_ids: Dict[str, int]) -> None:
+    """Gắn mã biến thể lên bản ghi tương ứng.
+
+    Không có bước này, báo cáo thí nghiệm không quy được alpha về biến thể nào
+    và mọi biến thể đều hiện ra với cỡ mẫu bằng không.
+    """
+    connection = db.connect()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        for expression, variant_id in variant_ids.items():
+            connection.execute(
+                "UPDATE alphas SET variant_id = ? WHERE run_id = ? AND expression = ?",
+                (int(variant_id), int(run_id), expression),
             )
         connection.execute("COMMIT")
     except Exception:

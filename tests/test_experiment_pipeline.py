@@ -421,7 +421,9 @@ def test_engine_builds_plan_from_experiment(store, hypothesis_id):
         )
     )
     plan = engine.build_plan(result["experiment_id"])
-    assert plan.strategy == "mutate"
+    # Chế độ direct: biến thể vào hàng đợi nguyên vẹn. Cho chúng qua bộ sinh sẽ
+    # bọc thêm toán tử và phá vỡ đúng cái thí nghiệm muốn cô lập.
+    assert plan.strategy == "direct"
     assert plan.experiment_id == result["experiment_id"]
     assert len(plan.seed_expressions) == 3
     assert "returns" in plan.data_fields
@@ -635,3 +637,44 @@ def test_experiment_feedback_reaches_memory(db, store, hypothesis_id):
     assert outcome["total"] == 3
     assert outcome["passed"] >= 1
     assert outcome["sample_size"] == 3
+
+
+def test_experiment_variants_are_queued_unchanged(db, store, hypothesis_id):
+    """Biến thể phải vào hàng đợi đúng như đã thiết kế, không bị bọc thêm."""
+    engine = ExperimentEngine(store)
+    result = engine.create(
+        ExperimentDesign(
+            hypothesis_id=hypothesis_id, name="Lookback",
+            base_expression="rank(ts_rank(returns, 20))",
+            variable="lookback", values=[5, 20, 60],
+            settings=dict(SETTINGS),
+        )
+    )
+    plan = engine.build_plan(result["experiment_id"])
+    plan.settings = dict(SETTINGS)
+    outcome = generate_and_queue(db, plan, variant_ids=plan.variant_ids)
+
+    queued = {record.expression for record in db.fetch_by_status(Status.PENDING, limit=50)}
+    designed = {variant["expression"] for variant in result["variants"]}
+    assert queued == designed
+    assert outcome.queued == 3
+
+
+def test_queued_variants_are_linked_back_to_their_variant(db, store, hypothesis_id):
+    """Không có liên kết này thì báo cáo hiện mọi biến thể với cỡ mẫu bằng không."""
+    engine = ExperimentEngine(store)
+    result = engine.create(
+        ExperimentDesign(
+            hypothesis_id=hypothesis_id, name="Lookback",
+            base_expression="rank(ts_rank(returns, 20))",
+            variable="lookback", values=[5, 20, 60],
+            settings=dict(SETTINGS),
+        )
+    )
+    plan = engine.build_plan(result["experiment_id"])
+    plan.settings = dict(SETTINGS)
+    generate_and_queue(db, plan, variant_ids=plan.variant_ids)
+
+    records = db.fetch_by_status(Status.PENDING, limit=50)
+    assert all(record.variant_id is not None for record in records)
+    assert len({record.variant_id for record in records}) == 3

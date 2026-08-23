@@ -431,3 +431,149 @@ chiếu trước khi tin vào lượt quét lớn.
 Mã nguồn đã được xác minh ở mức có thể xác minh mà không cần máy chủ. Hệ thống
 sẵn sàng chạy khi được cấp thông tin đăng nhập, nhưng lượt chạy thật đầu tiên
 vẫn nên coi là bước kiểm chứng, không phải bước vận hành.
+
+---
+
+# Phụ lục: mở rộng thành Alpha Research Hub
+
+**Ngày:** 2026-08-23 (đợt hai)
+**Phạm vi:** chỉ mã nguồn và môi trường cục bộ. Không credentials, không gọi BRAIN.
+
+## Cổng kiểm tra
+
+| Cổng | Kết quả |
+| --- | --- |
+| `pytest -q` | **PASS** — 399 passed (trước đợt này: 290) |
+| `python -m compileall .` | **PASS** — exit 0 |
+| Nhập toàn bộ package | **PASS** — 39/39 module |
+| `alphaforge --help` | **PASS** — 16 nhóm lệnh |
+| Phụ thuộc vòng | **PASS** — 0 |
+| TODO chưa xử lý | **PASS** — 0 |
+| Lệnh CLI cũ vẫn chạy | **PASS** — 11/11, socket bị chặn |
+
+## Đã triển khai
+
+| Phase | Nội dung | Mô đun |
+| --- | --- | --- |
+| 1 | Trí nhớ phân biệt 5 nguồn, độ phủ 9 chiều | `research/memory.py` (mở rộng) |
+| 2 | Thiếu hụt trên 8 chiều, gồm thiếu độ phủ | `research/gap.py` (mới) |
+| 3 | Điểm ưu tiên 4 thành phần kèm lý do | `research/priority.py` (mới) |
+| 4 | Thí nghiệm một thay đổi mỗi lần | `research/experiment.py` (mới) |
+| 5 | Kế hoạch sinh đã kiểm tra | `research/plan.py` (mới) |
+| 6 | Bộ sinh nhận kế hoạch, giữ 3 chiến lược cũ | `generator/engine.py` (không đổi) |
+| 7 | Phả hệ thêm `source_alpha_id` | `research/models.py`, `store.py` |
+| 8 | Kiểm tra biểu thức trước mô phỏng | `pipeline/validation.py` (mới) |
+| 9 | Đường duy nhất vào hàng đợi | `pipeline/generation.py` (mới) |
+| 10 | Chuẩn hóa kết quả: `evaluation_status`, `rank`, `robustness` | `storage/db.py` |
+| 11 | Độ bền 6 phép kiểm, 3 hồ sơ | `pipeline/robustness.py` (mới) |
+| 12 | Bậc thang tương quan, bảng `correlation_results` | `pipeline/evaluation.py` (mới) |
+| 13 | `CANDIDATE`, `HUMAN_REVIEW` | `storage/db.py` |
+| 14 | `experiment_outcome` phản hồi về trí nhớ | `research/memory.py` |
+| 15 | Báo cáo thí nghiệm và kết luận | `research/report.py` (mới) |
+| 16 | 7 điểm cuối web mới | `web/app.py` |
+| 17 | 5 nhóm lệnh mới, giữ nguyên lệnh cũ | `cli.py` |
+
+## Lỗi phát hiện trong quá trình xây dựng
+
+### L8 — Biến thể thí nghiệm bị bọc thêm toán tử · **ĐÃ SỬA**
+
+`ExperimentEngine.build_plan` dùng chiến lược `mutate`, nghĩa là biến thể đi qua
+bộ sinh và bị bọc thêm `rank(...)`, `zscore(...)` — **phá vỡ đúng cái mà thí
+nghiệm có kiểm soát muốn cô lập**. Thí nghiệm khảo sát cửa sổ nhìn lại lại đo
+ra ảnh hưởng của toán tử bọc ngoài.
+
+Phát hiện khi chạy thử toàn vòng và thấy báo cáo hiện mọi biến thể với cỡ mẫu
+bằng không.
+
+**Sửa:** thêm chế độ `direct` cho kế hoạch, nghĩa là biểu thức đã xác định và
+không cần sinh gì thêm. Biến thể vào hàng đợi nguyên vẹn.
+
+### L9 — Alpha không nối được về biến thể · **ĐÃ SỬA**
+
+Không có `variant_id`, báo cáo không quy được kết quả về biến thể nào và mọi
+biến thể hiện ra với cỡ mẫu bằng không, dù thí nghiệm đã chạy xong.
+
+**Sửa:** `generate_and_queue` nhận ánh xạ biểu thức sang mã biến thể và gắn lên
+bản ghi sau khi thêm.
+
+### L10 — Lệch placeholder lần thứ hai · **ĐÃ SỬA**
+
+Thêm cột `generation_seed` vào `alpha_lineage` làm câu lệnh có 12 dấu hỏi nhưng
+tuple chỉ có 11 giá trị.
+
+**Sửa:** bổ sung giá trị thiếu, **và thêm kiểm thử bất biến quét toàn kho, đếm
+dấu hỏi so với số tham số trong mọi lệnh INSERT có thể đếm tĩnh.** Đã xác minh
+kiểm thử bắt được lỗi bằng cách cố tình phá lại code.
+
+### L11 — `min_operators=1` loại nhầm biểu thức hợp lệ · **ĐÃ SỬA**
+
+`close * -open` không có lời gọi toán tử nào nhưng vẫn là biểu thức hợp lệ.
+
+**Sửa:** mặc định về 0, vẫn cấu hình được cho thí nghiệm nào cần.
+
+### L12 — Hai công thức ưu tiên cho cùng một khái niệm · **ĐÃ SỬA**
+
+`analyzer.research_gaps` dùng `median / sqrt(count)`, còn `ResearchPriority` dùng
+tích bốn thành phần. Hai nơi trả về hai con số khác nhau cho cùng một họ.
+
+**Sửa:** hợp nhất, `analyzer.research_gaps` nay gọi `ResearchPriority`. Giữ
+nguyên chữ ký và các khóa cũ để mã hiện có không phải sửa.
+
+## Kiểm thử thêm
+
+| Tệp | Số lượng | Nội dung |
+| --- | --- | --- |
+| `test_research_memory_sources.py` | 35 | nguồn dữ liệu, độ phủ, thiếu hụt, ưu tiên |
+| `test_experiment_pipeline.py` | 63 | kiểm tra, kế hoạch, thí nghiệm, độ bền, thẩm định, ứng viên |
+| bổ sung vào `test_web.py` | 11 | điểm cuối nghiên cứu mới |
+| **Tổng thêm** | **109** | 290 → **399** |
+
+Kiểm thử đáng chú ý:
+
+* `test_experiment_variants_are_queued_unchanged` — chặn L8 tái phát;
+* `test_every_insert_binds_the_right_number_of_values` — chặn cả lớp lỗi L10;
+* `test_submission_requires_human_controlled_state` — hệ thống không tự nộp;
+* `test_evaluation_never_produces_submitted_on_its_own`;
+* `test_missing_data_is_reported_as_unavailable_not_as_failure` — thiếu dữ liệu
+  khác với không đạt;
+* `test_small_sample_does_not_produce_a_strong_claim`.
+
+## Tương thích ngược — **PASS**
+
+* Ba chiến lược sinh giữ nguyên, `GeneratorEngine` không đổi hành vi.
+* Toàn bộ 11 lệnh CLI cũ chạy đúng như trước.
+* `Status` chỉ **thêm** giá trị, không đổi hay bỏ giá trị nào.
+* `analyzer.research_gaps` giữ chữ ký và mọi khóa cũ.
+* Kho SQLite cũ tự di trú, không phải tạo lại.
+* Không xóa mô đun nào đang được dùng.
+
+## An toàn — **PASS**
+
+Quét lại sau khi thêm mã: vẫn chỉ có hai lệnh POST trong toàn kho
+(`/authentication` và `/simulations` — gửi job mô phỏng). Điểm cuối nộp alpha
+của nền tảng không xuất hiện ở đâu.
+
+`Status.SUBMITTED` nay có một nơi ghi: `EvaluationPipeline.mark_submitted`. Hàm
+này **từ chối** nếu alpha chưa ở `CANDIDATE` hoặc `HUMAN_REVIEW`, và chỉ ghi
+chép việc người dùng nói rằng họ đã tự nộp. Không có lệnh gọi mạng nào trong đó.
+
+## Còn tồn tại
+
+| Vấn đề | Mức | Ghi chú |
+| --- | --- | --- |
+| Phép kiểm độ nhạy cần chỉ số biến thể | trung bình | báo `unavailable` khi thiếu, không đoán |
+| Phép kiểm theo năm cần phân rã `pnlByYear` | trung bình | chưa rõ máy chủ có trả về không |
+| Ngưỡng chọn theo phán đoán | trung bình | `min_sample`, `SATURATION_REFERENCE`, hệ số làm nhẹ 0.5/0.3 |
+| Giao diện web mới chỉ có API | thấp | trang HTML chưa hiển thị phần mới |
+| `family` và `fingerprint` trùng giá trị | thấp | giữ để tương thích ngược |
+
+## Chưa kiểm được — **NOT TESTED**
+
+Toàn bộ mục NOT TESTED của đợt trước vẫn giữ nguyên. Bổ sung:
+
+| Hạng mục | Trạng thái | Lý do |
+| --- | --- | --- |
+| Máy chủ có trả `pnlByYear` không | NOT TESTED | quyết định phép kiểm theo năm có chạy được |
+| Tên khóa thật của phân rã theo năm | NOT TESTED | mã dò bốn biến thể tên khóa |
+| Ngưỡng độ bền hợp lý ở từng khu vực | NOT TESTED | cần dữ liệu thật để hiệu chỉnh |
+| Tương quan thật sau bước lọc cấu trúc | NOT TESTED | chưa biết bước lọc cục bộ tiết kiệm được bao nhiêu lượt gọi |

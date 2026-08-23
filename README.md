@@ -1,8 +1,19 @@
-# Alpha Forge
+# Alpha Research Hub
 
-Bộ khung Python cho toàn bộ vòng đời nghiên cứu alpha trên nền tảng WorldQuant BRAIN: ghi nhớ những gì đã nghiên cứu, sinh biểu thức mới dựa trên trí nhớ đó, gửi mô phỏng, chấm điểm, lọc tương quan và theo dõi tiến độ qua giao diện web.
+Bộ khung Python cho toàn bộ vòng đời nghiên cứu alpha trên nền tảng WorldQuant BRAIN.
 
-Điểm khác biệt so với một bộ sinh biểu thức thông thường là **trí nhớ nghiên cứu**. Hệ thống nhập lịch sử alpha đã nộp từ BRAIN, phân tích cấu trúc của chúng, và dùng kết quả đó để tránh lặp lại những hướng đã bão hòa.
+**Đây không phải một bộ sinh alpha.** Bộ sinh tối ưu số lượng: sinh thật nhiều biểu thức, mô phỏng tất cả, giữ cái nào Sharpe cao. Cách đó hỏng ở quy mô lớn vì nó không nhớ gì — sau vài nghìn alpha nó vẫn sinh lại những họ cấu trúc đã cho kết quả kém, chỉ khác cách viết.
+
+Hệ thống này gồm bảy phần, bộ sinh chỉ là một trong bảy:
+
+```text
+Research Memory  +  Experiment Engine  +  Alpha Generator  +  Validation
+                 +  Simulation  +  Analytics  +  Research Feedback
+```
+
+Mục tiêu không phải "sinh nhiều alpha" mà là **mỗi lượt mô phỏng phải tạo thêm thông tin nghiên cứu**. Một alpha thất bại vẫn có giá trị nếu biết nó thất bại trong điều kiện nào.
+
+Kiến trúc đầy đủ nằm ở [RESEARCH_ARCHITECTURE.md](RESEARCH_ARCHITECTURE.md).
 
 ## 1. Vòng nghiên cứu
 
@@ -10,25 +21,33 @@ Bộ khung Python cho toàn bộ vòng đời nghiên cứu alpha trên nền t�
 Historical BRAIN
       │  history scan
       ▼
-Research Memory ──────────► Research Gap
-      │                          │
-      │                          ▼
-      │                     Hypothesis
-      │                          │
-      │                          ▼
-      │                     Experiment
-      │                          │
-      ▼                          ▼
-  Generator ◄──── trọng số theo họ cấu trúc
+Research Memory ──► Research Gap ──► Research Priority
+      │                                     │
+      │                                     ▼
+      │                                Hypothesis
+      │                                     │
+      │                                     ▼
+      │                                Experiment  (một thay đổi thiết kế)
+      │                                     │
+      │                                     ▼
+      │                              Generation Plan
+      ▼                                     │
+  Generator ◄── trọng số ──────────────────┘
       │
       ▼
-  Simulation ──► Score ──► Correlation ──► Candidate
-                                               │
-                                               ▼
-                                    Submission (người quyết định)
-                                               │
-                                               ▼
-                                       Historical BRAIN
+  Validation ──► Simulation ──► Score ──► Robustness ──► Correlation
+                                                              │
+                                                              ▼
+                                                         CANDIDATE
+                                                              │
+                                                              ▼
+                                                     HUMAN DECISION
+                                                              │
+                                                              ▼
+                                                        Submission
+                                                              │
+                                                              ▼
+                                                    Historical BRAIN
 ```
 
 Vòng lặp khép kín: alpha đã nộp quay lại làm dữ liệu cho trí nhớ nghiên cứu ở lượt sau. Bước nộp alpha **luôn do người thực hiện**; hệ thống không bao giờ tự nộp, kể cả khi một alpha vượt mọi ngưỡng.
@@ -48,18 +67,27 @@ alphaforge/
     engine.py            Sinh biểu thức theo mẫu, có nhận trí nhớ nghiên cứu
     templates.py         Danh mục mẫu biểu thức
   pipeline/
+    validation.py        Chặn biểu thức hỏng trước khi tốn hạn mức mô phỏng
+    generation.py        Đường duy nhất từ kế hoạch vào hàng đợi
     runner.py            Hàng đợi mô phỏng đa luồng, tự giảm tốc khi bị hạn mức
     scorer.py            Ngưỡng Sharpe, Fitness, Turnover, Drawdown, Margin
+    robustness.py        Độ bền: theo năm, độ nhạy tham số, tập trung lợi nhuận
+    evaluation.py        Bậc thang thẩm định tới ứng viên
     correlation.py       Tự tương quan và tương quan với danh mục sản phẩm
   history/
     scanner.py           Nhập lịch sử alpha đã nộp từ BRAIN
     fingerprint.py       Vân tay cấu trúc ba mức và phát hiện trùng lặp
     analyzer.py          Thống kê theo trung vị, phân vị và cỡ mẫu
-    report.py            Báo cáo nghiên cứu tổng hợp
+    report.py            Báo cáo lịch sử tổng hợp
   research/
     models.py            ResearchProject, Hypothesis, Experiment, Variant, Lineage
     store.py             Kho cho lớp nghiên cứu
-    memory.py            Trí nhớ nghiên cứu lái bộ sinh
+    memory.py            Trí nhớ nghiên cứu, phân biệt năm nguồn dữ liệu
+    gap.py               Thiếu hụt trên tám chiều nghiên cứu
+    priority.py          Điểm ưu tiên bốn thành phần, kèm lý do
+    experiment.py        Thí nghiệm có kiểm soát, một thay đổi mỗi lần
+    plan.py              Kế hoạch sinh đã kiểm tra
+    report.py            Báo cáo thí nghiệm và kết luận nghiên cứu
   llm/                   Mô hình ngôn ngữ tùy chọn: Claude, Ollama, hoặc không dùng
   web/app.py             FastAPI phục vụ bảng theo dõi, chỉ đọc kho
 config/settings.yaml     Cấu hình mặc định
@@ -73,13 +101,15 @@ Toàn bộ hệ thống dùng chung một tệp SQLite. Bảng chính:
 | Bảng | Nội dung |
 | --- | --- |
 | `runs` | Mỗi lô sinh biểu thức |
-| `alphas` | Biểu thức, trạng thái, chỉ số, vân tay, phả hệ |
+| `alphas` | Biểu thức, trạng thái, chỉ số, vân tay, phả hệ, độ bền |
 | `historical_alphas` | Alpha đã nộp nhập về từ BRAIN |
 | `research_projects` | Dự án nghiên cứu |
 | `hypotheses` | Giả thuyết thuộc dự án |
 | `experiments` | Thí nghiệm thuộc giả thuyết, kèm thiết lập mô phỏng |
 | `experiment_variants` | Biến thể trong một thí nghiệm |
 | `alpha_lineage` | Quan hệ cha con và nguồn gốc từng alpha |
+| `generation_plans` | Kế hoạch sinh đã chạy |
+| `correlation_results` | Từng lượt kiểm tra tương quan, kèm ngưỡng đã dùng |
 | `data_fields` | Danh mục trường dữ liệu tải về |
 | `events` | Nhật ký sự kiện |
 
@@ -147,15 +177,63 @@ python -m alphaforge.cli history check "rank(ts_mean(returns, 20))" --duplicates
 
 Sau khi có lịch sử, lệnh `generate` tự động hạ ưu tiên những họ cấu trúc đã thử nhiều mà kết quả kém, và bỏ qua biểu thức đã tồn tại. Dùng `--no-memory` để quay lại hành vi phân phối đều.
 
-### Lớp nghiên cứu
+### Nghiên cứu theo giả thuyết
+
+Đây là quy trình chính, thay cho việc sinh alpha hàng loạt:
 
 ```bash
+# 1. Xem đã nghiên cứu những gì và còn thiếu chỗ nào
+python -m alphaforge.cli research gaps
+python -m alphaforge.cli research priorities --dimension field
+
+# 2. Lập dự án và giả thuyết
 python -m alphaforge.cli research project create --name "Momentum Volume" --family Momentum
-python -m alphaforge.cli research project list
-python -m alphaforge.cli research hypothesis create --research-id 1 --statement "Volume xác nhận momentum"
-python -m alphaforge.cli research experiment create --hypothesis-id 1 --name "Lookback test" --variable lookback
-python -m alphaforge.cli research lineage ALPHA-123
+python -m alphaforge.cli research hypothesis create --research-id 1 \
+    --statement "Cửa sổ dài cho tín hiệu momentum ổn định hơn"
+
+# 3. Thiết kế thí nghiệm đổi ĐÚNG MỘT biến
+python -m alphaforge.cli experiment design --hypothesis-id 1 --name "Lookback" \
+    --base-expression "rank(ts_rank(returns, 20))" \
+    --variable lookback --values 5 10 20 60 120 250
+
+# 4. Đưa biến thể vào hàng đợi, rồi mô phỏng
+python -m alphaforge.cli experiment run 1 --seed 42
+python -m alphaforge.cli run --concurrency 3
+
+# 5. Thẩm định cục bộ: chấm điểm, độ bền, lọc trùng cấu trúc. Không gọi BRAIN.
+python -m alphaforge.cli evaluate --robustness standard
+
+# 6. Đọc kết luận
+python -m alphaforge.cli experiment report 1
 ```
+
+Báo cáo **không khẳng định giả thuyết đúng khi cỡ mẫu chưa đủ**:
+
+```text
+Kết luận [evidence_insufficient]:
+  Bằng chứng chưa đủ. Mới có 3 alpha có chỉ số, cần tối thiểu 8 để kết luận
+  về ảnh hưởng của lookback.
+
+Bước tiếp theo:
+  - Chạy thêm khoảng 5 alpha nữa cho cùng thiết kế trước khi rút kết luận.
+  - Không mở rộng sang biến khác khi biến hiện tại chưa kết luận được.
+```
+
+### Tra cứu alpha và quyết định nộp
+
+```bash
+python -m alphaforge.cli alpha show A12345
+python -m alphaforge.cli alpha lineage A12345
+python -m alphaforge.cli alpha candidates
+
+# Đưa alpha đã qua thẩm định lên bậc ứng viên
+python -m alphaforge.cli alpha promote 42
+
+# Sau khi TỰ NỘP trên nền tảng, ghi lại để trí nhớ nghiên cứu cập nhật
+python -m alphaforge.cli alpha mark-submitted 42 --by ten_cua_ban
+```
+
+Hệ thống **không nộp thay**. `mark-submitted` chỉ ghi chép.
 
 ### Bảng theo dõi
 

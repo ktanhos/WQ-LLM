@@ -20,12 +20,20 @@ from .history.report import build_report, load_history
 from .history.scanner import HistoricalAlphaScanner
 from .llm import get_provider
 from .pipeline.correlation import CorrelationChecker
+from .pipeline.evaluation import EvaluationPipeline
+from .pipeline.generation import generate_and_queue
+from .pipeline.robustness import PROFILES, RobustnessChecker
 from .pipeline.runner import SimulationRunner
 from .pipeline.scorer import Scorer
+from .research.experiment import ExperimentDesign, ExperimentEngine, ExperimentError
+from .research.gap import ResearchGap
 from .research.memory import ResearchMemory
 from .research.models import Experiment, Hypothesis, ResearchProject
+from .research.plan import GenerationPlan, PlanError
+from .research.priority import ResearchPriority
+from .research.report import ExperimentReport
 from .research.store import ResearchStore
-from .storage.db import Database, Status
+from .storage.db import Database, EvaluationStatus, Status
 
 logger = logging.getLogger("alphaforge")
 
@@ -99,6 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_history_commands(sub)
     _add_research_commands(sub)
+    _add_experiment_commands(sub)
+    _add_alpha_commands(sub)
+    _add_evaluate_command(sub)
 
     return parser
 
@@ -184,6 +195,96 @@ def _add_research_commands(sub) -> None:
 
     p_lineage = research_sub.add_parser("lineage", help="Phả hệ của một alpha.")
     p_lineage.add_argument("alpha_id")
+
+    p_gaps = research_sub.add_parser("gaps", help="Khoảng trống nghiên cứu theo tám chiều.")
+    p_gaps.add_argument("--kind", nargs="*", default=None,
+                        help="Lọc theo loại, ví dụ field_gap lookback_gap.")
+    p_gaps.add_argument("--limit", type=int, default=20)
+
+    p_priorities = research_sub.add_parser(
+        "priorities", help="Xếp hạng vùng nghiên cứu đáng khảo sát, kèm lý do."
+    )
+    p_priorities.add_argument("--limit", type=int, default=15)
+    p_priorities.add_argument("--dimension", default="family",
+                              choices=["family", "field", "operator", "template"])
+
+
+def _add_experiment_commands(sub) -> None:
+    """Nhóm lệnh chạy và báo cáo thí nghiệm."""
+    p_experiment = sub.add_parser(
+        "experiment", help="Thiết kế, chạy và báo cáo thí nghiệm có kiểm soát."
+    )
+    experiment_sub = p_experiment.add_subparsers(dest="subcommand", required=True)
+
+    p_design = experiment_sub.add_parser(
+        "design", help="Thiết kế thí nghiệm đổi đúng một biến."
+    )
+    p_design.add_argument("--hypothesis-id", type=int, required=True)
+    p_design.add_argument("--name", required=True)
+    p_design.add_argument("--base-expression", required=True)
+    p_design.add_argument("--variable", required=True)
+    p_design.add_argument("--values", nargs="+", required=True,
+                          help="Danh sách giá trị của biến, cần ít nhất hai.")
+    p_design.add_argument("--objective", default="")
+    p_design.add_argument("--expected-effect", default="")
+    p_design.add_argument(
+        "--allow-multiple-changes", action="store_true",
+        help="Cho phép đổi nhiều biến cùng lúc. Kết quả sẽ khó quy kết.",
+    )
+
+    p_erun = experiment_sub.add_parser(
+        "run", help="Sinh và đưa biến thể của thí nghiệm vào hàng đợi."
+    )
+    p_erun.add_argument("experiment_id", type=int)
+    p_erun.add_argument("--seed", type=int, default=None)
+    p_erun.add_argument("--max-candidates", type=int, default=None)
+    p_erun.add_argument("--dry-run", action="store_true")
+
+    p_ereport = experiment_sub.add_parser("report", help="Báo cáo kết quả thí nghiệm.")
+    p_ereport.add_argument("experiment_id", type=int)
+    p_ereport.add_argument("--json", action="store_true", help="In JSON thay vì văn bản.")
+    p_ereport.add_argument("--min-sample", type=int, default=8)
+
+    experiment_sub.add_parser("list", help="Liệt kê thí nghiệm đã có.")
+
+
+def _add_alpha_commands(sub) -> None:
+    """Nhóm lệnh tra cứu một alpha cụ thể."""
+    p_alpha = sub.add_parser("alpha", help="Tra cứu alpha trong kho.")
+    alpha_sub = p_alpha.add_subparsers(dest="subcommand", required=True)
+
+    p_show = alpha_sub.add_parser("show", help="Chi tiết một alpha.")
+    p_show.add_argument("alpha_id", help="Mã alpha hoặc số thứ tự bản ghi.")
+
+    p_alineage = alpha_sub.add_parser("lineage", help="Phả hệ đầy đủ của một alpha.")
+    p_alineage.add_argument("alpha_id")
+
+    p_candidates = alpha_sub.add_parser("candidates", help="Alpha đang chờ người xem xét.")
+    p_candidates.add_argument("--limit", type=int, default=25)
+
+    p_promote = alpha_sub.add_parser(
+        "promote", help="Đưa alpha đã qua thẩm định lên bậc ứng viên."
+    )
+    p_promote.add_argument("row_id", type=int)
+
+    p_submitted = alpha_sub.add_parser(
+        "mark-submitted",
+        help="Ghi nhận bạn đã tự nộp alpha trên nền tảng. Hệ thống không nộp thay.",
+    )
+    p_submitted.add_argument("row_id", type=int)
+    p_submitted.add_argument("--by", default="")
+
+
+def _add_evaluate_command(sub) -> None:
+    p_evaluate = sub.add_parser(
+        "evaluate",
+        help="Chấm điểm, kiểm tra độ bền và lọc trùng cấu trúc. Không gọi BRAIN.",
+    )
+    p_evaluate.add_argument("--limit", type=int, default=500)
+    p_evaluate.add_argument(
+        "--robustness", default="standard", choices=sorted(PROFILES),
+        help="Hồ sơ kiểm tra độ bền.",
+    )
 
 
 # ----------------------------------------------------------------------
@@ -571,7 +672,8 @@ def cmd_history(settings: Settings, args: argparse.Namespace) -> int:
 # Lớp nghiên cứu
 # ----------------------------------------------------------------------
 def cmd_research(settings: Settings, args: argparse.Namespace) -> int:
-    store = ResearchStore(Database(settings.db_path))
+    db = Database(settings.db_path)
+    store = ResearchStore(db)
     sim = settings.simulation.get("settings", {})
 
     if args.subcommand == "project":
@@ -642,6 +744,50 @@ def cmd_research(settings: Settings, args: argparse.Namespace) -> int:
         )
         return 0
 
+    if args.subcommand == "gaps":
+        memory = ResearchMemory(db)
+        known = {
+            "field": [
+                str(row["id"]) for row in db.load_data_fields(
+                    region=str(sim.get("region", "USA")),
+                    universe=str(sim.get("universe", "TOP3000")),
+                    delay=int(sim.get("delay", 1)), limit=100000,
+                )
+            ]
+        }
+        gaps = ResearchGap(memory).find(args.kind, limit_per_kind=args.limit,
+                                        known_values=known if known["field"] else None)
+        if not gaps:
+            print(
+                "Chưa phát hiện khoảng trống nào. Kho lịch sử có thể còn rỗng, "
+                "hãy chạy 'alphaforge history scan'.",
+                file=sys.stderr,
+            )
+        print(json.dumps([gap.as_dict() for gap in gaps[:args.limit]],
+                         ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    if args.subcommand == "priorities":
+        memory = ResearchMemory(db)
+        priority = ResearchPriority()
+        coverage = memory.coverage()[args.dimension]
+        profiles = memory.profiles()
+        scores = []
+        for key, count in coverage.items():
+            profile = profiles.get(key)
+            scores.append(priority.score(
+                key, dimension=args.dimension, sample_size=count,
+                median_sharpe=profile.median_sharpe if profile else None,
+                pass_rate=profile.pass_rate if profile else 0.0,
+            ))
+        ranked = priority.rank(scores, limit=args.limit)
+        for score in ranked:
+            print(priority.explain(score))
+            print()
+        if not ranked:
+            print("Chưa có dữ liệu để xếp hạng.", file=sys.stderr)
+        return 0
+
     if args.subcommand == "lineage":
         chain = store.ancestry(args.alpha_id)
         children = store.get_children(args.alpha_id)
@@ -654,6 +800,227 @@ def cmd_research(settings: Settings, args: argparse.Namespace) -> int:
         return 0
 
     return 1
+
+
+
+# ----------------------------------------------------------------------
+# Thí nghiệm có kiểm soát
+# ----------------------------------------------------------------------
+def cmd_experiment(settings: Settings, args: argparse.Namespace) -> int:
+    db = Database(settings.db_path)
+    store = ResearchStore(db)
+    engine = ExperimentEngine(store)
+
+    if args.subcommand == "design":
+        values: List[Any] = []
+        for raw in args.values:
+            # Giá trị số được giữ dạng số để thay vào biểu thức cho đúng.
+            try:
+                values.append(int(raw))
+            except ValueError:
+                try:
+                    values.append(float(raw))
+                except ValueError:
+                    values.append(raw)
+        try:
+            result = engine.create(
+                ExperimentDesign(
+                    hypothesis_id=args.hypothesis_id,
+                    name=args.name,
+                    base_expression=args.base_expression,
+                    variable=args.variable,
+                    values=values,
+                    objective=args.objective,
+                    expected_effect=args.expected_effect,
+                    settings=dict(settings.simulation.get("settings", {})),
+                    allow_multiple_changes=args.allow_multiple_changes,
+                )
+            )
+        except ExperimentError as exc:
+            print(f"Thiết kế thí nghiệm không hợp lệ: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    if args.subcommand == "run":
+        try:
+            plan = engine.build_plan(
+                args.experiment_id, seed=args.seed, max_candidates=args.max_candidates
+            )
+        except (ExperimentError, PlanError) as exc:
+            print(f"Không dựng được kế hoạch: {exc}", file=sys.stderr)
+            return 1
+        if not args.dry_run:
+            plan.save(db)
+        outcome = generate_and_queue(
+            db, plan, tag=f"experiment-{args.experiment_id}", dry_run=args.dry_run,
+            variant_ids=plan.variant_ids,
+        )
+        print(json.dumps(outcome.as_dict(), ensure_ascii=False, indent=2, default=str))
+        if outcome.queued:
+            print(
+                f"\nĐã đưa {outcome.queued} biểu thức vào hàng đợi. "
+                "Chạy 'alphaforge run' để mô phỏng.",
+                file=sys.stderr,
+            )
+        return 0
+
+    if args.subcommand == "report":
+        try:
+            reporter = ExperimentReport(db, min_sample=args.min_sample)
+            if args.json:
+                print(json.dumps(
+                    reporter.build(args.experiment_id), ensure_ascii=False,
+                    indent=2, default=str,
+                ))
+            else:
+                print(reporter.render_text(args.experiment_id))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return 0
+
+    if args.subcommand == "list":
+        connection = db.connect()
+        try:
+            rows = [dict(row) for row in connection.execute(
+                "SELECT id, hypothesis_id, name, variable_changed, status,"
+                " base_expression FROM experiments ORDER BY id"
+            ).fetchall()]
+        finally:
+            connection.close()
+        print(json.dumps(rows, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    return 1
+
+
+# ----------------------------------------------------------------------
+# Tra cứu alpha
+# ----------------------------------------------------------------------
+def cmd_alpha(settings: Settings, args: argparse.Namespace) -> int:
+    db = Database(settings.db_path)
+    store = ResearchStore(db)
+
+    if args.subcommand == "show":
+        record = _find_alpha(db, args.alpha_id)
+        if record is None:
+            print(f"Không tìm thấy alpha {args.alpha_id}.", file=sys.stderr)
+            return 1
+        payload = {
+            "row_id": record.id,
+            "alpha_id": record.alpha_id,
+            "expression": record.expression,
+            "status": record.status,
+            "evaluation_status": record.evaluation_status,
+            "score": record.score,
+            "metrics": record.metrics,
+            "robustness": record.robustness,
+            "settings": record.settings,
+            "self_correlation": record.self_correlation,
+            "prod_correlation": record.prod_correlation,
+            "reject_reason": record.reject_reason,
+            "validation_error": record.validation_error,
+            "generation": {
+                "strategy": record.generation_strategy,
+                "seed": record.generation_seed,
+                "source_type": record.source_type,
+                "source_alpha_id": record.source_alpha_id,
+                "experiment_id": record.experiment_id,
+                "variant_id": record.variant_id,
+                "plan_id": record.plan_id,
+            },
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    if args.subcommand == "lineage":
+        print(json.dumps(
+            {
+                "alpha_id": args.alpha_id,
+                "ancestry": store.ancestry(args.alpha_id),
+                "children": store.get_children(args.alpha_id),
+            },
+            ensure_ascii=False, indent=2, default=str,
+        ))
+        return 0
+
+    if args.subcommand == "candidates":
+        items = ResearchMemory(db).candidates(limit=args.limit)
+        if not items:
+            print(
+                "Chưa có ứng viên nào. Chạy 'alphaforge evaluate' sau khi mô phỏng.",
+                file=sys.stderr,
+            )
+        print(json.dumps(items, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    if args.subcommand == "promote":
+        pipeline = EvaluationPipeline(db, Scorer(settings.scoring))
+        if pipeline.promote_to_candidate(args.row_id):
+            print(f"Alpha {args.row_id} đã lên bậc ứng viên.")
+            return 0
+        print(
+            f"Alpha {args.row_id} chưa qua đủ các bước thẩm định nên chưa thể "
+            "thành ứng viên.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.subcommand == "mark-submitted":
+        pipeline = EvaluationPipeline(db, Scorer(settings.scoring))
+        if pipeline.mark_submitted(args.row_id, confirmed_by=args.by):
+            print(
+                f"Đã ghi nhận alpha {args.row_id} là đã nộp. "
+                "Hệ thống không nộp thay, đây chỉ là ghi chép."
+            )
+            return 0
+        print(
+            f"Alpha {args.row_id} không ở trạng thái ứng viên hoặc đang xem xét, "
+            "nên không đánh dấu đã nộp được.",
+            file=sys.stderr,
+        )
+        return 1
+
+    return 1
+
+
+def _find_alpha(db: Database, identifier: str):
+    """Tra theo mã alpha của nền tảng, hoặc theo số thứ tự bản ghi."""
+    connection = db.connect()
+    try:
+        row = connection.execute(
+            "SELECT id FROM alphas WHERE alpha_id = ?", (str(identifier),)
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is not None:
+        return db.get_alpha(int(row["id"]))
+    try:
+        return db.get_alpha(int(identifier))
+    except (TypeError, ValueError):
+        return None
+
+
+# ----------------------------------------------------------------------
+# Thẩm định cục bộ
+# ----------------------------------------------------------------------
+def cmd_evaluate(settings: Settings, args: argparse.Namespace) -> int:
+    db = Database(settings.db_path)
+    pipeline = EvaluationPipeline(
+        db,
+        Scorer(settings.scoring),
+        robustness=RobustnessChecker(profile=args.robustness),
+    )
+    outcome = pipeline.run(limit=args.limit)
+    print(json.dumps(outcome.as_dict(), ensure_ascii=False, indent=2))
+    if outcome.candidates == 0 and outcome.robust:
+        print(
+            f"\n{outcome.robust} alpha đã qua thẩm định. Dùng "
+            "'alphaforge alpha promote <row_id>' để đưa lên bậc ứng viên.",
+            file=sys.stderr,
+        )
+    return 0
 
 
 COMMANDS = {
@@ -670,6 +1037,9 @@ COMMANDS = {
     "web": cmd_web,
     "history": cmd_history,
     "research": cmd_research,
+    "experiment": cmd_experiment,
+    "alpha": cmd_alpha,
+    "evaluate": cmd_evaluate,
 }
 
 

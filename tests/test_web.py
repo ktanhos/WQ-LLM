@@ -164,3 +164,52 @@ def test_limits_are_bounded(client):
     app, _ = client
     assert app.get("/api/history?limit=99999").status_code == 422
     assert app.get("/api/top?limit=0").status_code == 422
+
+
+# ======================================================================
+# Phase 16: các trang nghiên cứu bổ sung
+# ======================================================================
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/research/coverage", "/api/research/gaps/detailed",
+        "/api/research/priorities", "/api/experiments", "/api/alphas",
+        "/api/candidates",
+    ],
+)
+def test_research_endpoints_work_on_empty_database(client, path):
+    app, _ = client
+    assert app.get(path).status_code == 200
+
+
+def test_coverage_endpoint_reports_dimensions(client):
+    app, db = client
+    _seed_history(db, "A1", "fam1")
+    payload = app.get("/api/research/coverage").json()
+    assert "field" in payload and "operator" in payload
+    assert payload["field"]["close"] == 1
+
+
+def test_alphas_endpoint_filters_by_status(client):
+    app, db = client
+    db.add_alphas(["rank(close)", "rank(open)"], {"region": "USA"})
+    record = db.fetch_by_status(Status.PENDING)[0]
+    db.update_alpha(record.id, status=Status.CANDIDATE, score=2.0)
+    items = app.get(f"/api/alphas?status={Status.CANDIDATE}").json()["items"]
+    assert len(items) == 1
+    assert items[0]["score"] == 2.0
+
+
+def test_experiment_report_endpoint_returns_404_for_unknown(client):
+    app, _ = client
+    assert app.get("/api/experiments/999/report").status_code == 404
+
+
+def test_priorities_endpoint_includes_reasons(client):
+    app, db = client
+    for index in range(3):
+        _seed_history(db, f"A{index}", "fam1")
+    items = app.get("/api/research/priorities").json()["items"]
+    assert items
+    assert "reasons" in items[0]
+    assert "components" in items[0]

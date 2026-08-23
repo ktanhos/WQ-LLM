@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from ..history.fingerprint import fingerprint
 from .models import Experiment, ExperimentVariant
-from .plan import GenerationPlan
+from .plan import STRATEGY_DIRECT, GenerationPlan
 from .store import ResearchStore
 
 #: Các biến thiết kế mà một thí nghiệm có thể khảo sát.
@@ -284,9 +284,9 @@ class ExperimentEngine:
     ) -> GenerationPlan:
         """Dựng kế hoạch sinh từ các biến thể đã thiết kế.
 
-        Biến thể của một thí nghiệm là biểu thức cụ thể chứ không phải khuôn,
-        nên kế hoạch dùng chiến lược mutate với chính chúng làm gốc. Nhờ vậy
-        bộ sinh không tự ý thêm biến nào ngoài biến đang khảo sát.
+        Biến thể của một thí nghiệm là biểu thức đã xác định, nên kế hoạch dùng
+        chế độ `direct`: đưa thẳng chúng vào hàng đợi. Cho chúng đi qua bộ sinh
+        sẽ bọc thêm toán tử và phá vỡ đúng cái mà thí nghiệm muốn cô lập.
         """
         experiment = self.store.get_experiment(experiment_id)
         if experiment is None:
@@ -308,7 +308,7 @@ class ExperimentEngine:
         })
 
         plan = GenerationPlan(
-            strategy="mutate",
+            strategy=STRATEGY_DIRECT,
             data_fields=fields,
             lookbacks=lookbacks,
             seed_expressions=expressions,
@@ -322,6 +322,10 @@ class ExperimentEngine:
             constraints={"allowed_fields": fields},
             notes=f"Kế hoạch cho thí nghiệm {experiment_id}: {experiment.get('name')}",
         )
+        # Ánh xạ biểu thức sang biến thể, để báo cáo quy được kết quả về đúng chỗ.
+        plan.variant_ids = {
+            variant["expression"]: variant["id"] for variant in variants
+        }
         # Kế hoạch gắn với giả thuyết thì phải nêu dự án, nhưng thí nghiệm không
         # lưu dự án trực tiếp. Bỏ giả thuyết ra nếu nơi gọi không cung cấp dự án.
         if plan.research_id is None:

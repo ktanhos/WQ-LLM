@@ -21,8 +21,15 @@ from typing import Any, Dict, List, Optional, Sequence
 from ..generator.templates import TEMPLATES_BY_NAME
 from ..storage.db import Database, utc_now
 
-#: Chiến lược sinh được hỗ trợ. Giữ đúng ba chiến lược đang có, không thêm.
-STRATEGIES = ("template", "pairwise", "mutate")
+#: Ba chiến lược của bộ sinh, giữ nguyên không thêm bớt.
+GENERATOR_STRATEGIES = ("template", "pairwise", "mutate")
+
+#: Chế độ khi biểu thức đã được xác định sẵn và không cần sinh gì thêm, ví dụ
+#: biến thể của một thí nghiệm có kiểm soát. Đưa chúng qua bộ sinh sẽ bọc thêm
+#: toán tử và phá vỡ đúng cái mà thí nghiệm đang muốn cô lập.
+STRATEGY_DIRECT = "direct"
+
+STRATEGIES = GENERATOR_STRATEGIES + (STRATEGY_DIRECT,)
 
 
 class PlanError(ValueError):
@@ -52,6 +59,8 @@ class GenerationPlan:
     seed_expressions: Sequence[str] = field(default_factory=tuple)
     notes: str = ""
     id: Optional[int] = None
+    #: Ánh xạ biểu thức sang mã biến thể, chỉ dùng cho kế hoạch của thí nghiệm.
+    variant_ids: Dict[str, int] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     def validate(self) -> "GenerationPlan":
@@ -67,6 +76,10 @@ class GenerationPlan:
         if self.max_candidates <= 0:
             raise PlanError("max_candidates phải lớn hơn không.")
 
+        if self.strategy == STRATEGY_DIRECT and not self.seed_expressions:
+            raise PlanError(
+                "Chế độ direct cần danh sách biểu thức đã xác định."
+            )
         if self.strategy in ("template", "pairwise") and not self.data_fields:
             raise PlanError(
                 f"Chiến lược {self.strategy} cần ít nhất một trường dữ liệu."
