@@ -261,14 +261,18 @@ def _store_invalid(
     try:
         connection.execute("BEGIN IMMEDIATE")
         for result in refused:
+            # Chỉ đụng tới bản ghi của chính lượt sinh này. Không có điều kiện
+            # `run_id`, một biểu thức bị lô sau từ chối vì trùng sẽ kéo luôn
+            # bản ghi đang chờ của lô trước sang INVALID, và alpha đó biến mất
+            # khỏi hàng đợi mà không ai biết.
             connection.execute(
                 """
                 UPDATE alphas
                    SET status = ?, validation_error = ?, plan_id = ?, source_type = ?
-                 WHERE expression = ? AND status = ?
+                 WHERE expression = ? AND status = ? AND run_id IS ?
                 """,
                 (Status.INVALID, result.reason, plan.id, plan.strategy,
-                 result.expression, Status.PENDING),
+                 result.expression, Status.PENDING, run_id),
             )
         connection.execute("COMMIT")
     except Exception:

@@ -71,7 +71,15 @@ DIMENSIONS = (
 SUCCESS_STATUSES = frozenset({
     "PASSED", "PASS", "ACTIVE", "SUBMITTED", "IS", "CANDIDATE", "HUMAN_REVIEW",
 })
-FAILURE_STATUSES = frozenset({"FAILED", "FAIL", "ERROR", "REJECTED", "REJECT", "INVALID"})
+#: Trạng thái được coi là alpha không đạt. `UNSUBMITTED` và `DECOMMISSIONED`
+#: nằm ở đây để khớp với `history.analyzer`: một alpha đã mô phỏng rồi bị người
+#: nghiên cứu bỏ không nộp là bằng chứng phủ định, không phải bằng chứng thiếu.
+#: Hai mô đun từng phân loại hai nhãn này khác nhau, khiến tỷ lệ đạt của cùng
+#: một tập alpha lệch nhau tùy nơi tính.
+FAILURE_STATUSES = frozenset({
+    "FAILED", "FAIL", "ERROR", "REJECTED", "REJECT", "INVALID",
+    "UNSUBMITTED", "DECOMMISSIONED",
+})
 
 
 def _is_submitted(status: Any) -> bool:

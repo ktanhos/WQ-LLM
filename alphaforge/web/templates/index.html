@@ -648,7 +648,7 @@ async function showExperiment(experimentId) {
       <b>${experiment.name || ""}</b> — đổi <b>${experiment.variable_changed || ""}</b>
       qua ${JSON.stringify(design.values || [])}<br>
       Biểu thức gốc: <code>${experiment.base_expression || ""}</code><br>
-      Alpha: ${summary}${report.evidence_level ? ` · Mức bằng chứng: ${report.evidence_level}` : ""}`;
+      Alpha: ${summary}${(report.conclusion || {}).evidence ? ` · Mức bằng chứng: ${report.conclusion.evidence}` : ""}`;
 
     // Báo cáo tính theo biến thể; ghép vào để mỗi dòng có cả cỡ mẫu lẫn kết quả.
     const byLabel = {};

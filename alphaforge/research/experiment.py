@@ -387,7 +387,7 @@ class ExperimentEngine:
                 or len(expressions)
             ),
             seed=seed if seed is not None else (design.generation_seed if design else None),
-            settings=dict(experiment.get("settings") or {}),
+            settings=_simulation_settings(experiment),
             research_id=research_id,
             hypothesis_id=hypothesis_id if hypothesis_id is not None
             else experiment.get("hypothesis_id"),
@@ -405,3 +405,24 @@ class ExperimentEngine:
         if plan.research_id is None:
             plan.hypothesis_id = None
         return plan.validate()
+
+
+def _simulation_settings(experiment: Dict[str, Any]) -> Dict[str, Any]:
+    """Thiết lập mô phỏng của một thí nghiệm, đã bỏ phần siêu dữ liệu thiết kế.
+
+    Thiết kế được lưu lồng trong `settings["_design"]` vì bảng `experiments`
+    không có cột riêng cho nó. Nhưng thiết lập của kế hoạch trở thành thiết lập
+    mô phỏng của từng alpha, nên để `_design` lọt qua sẽ gây hai hậu quả:
+
+        - mã băm chống trùng tính cả `_design`, nên cùng một biểu thức với cùng
+          thiết lập thật lại ra hai mã băm khác nhau ở hai thí nghiệm, và bản
+          trùng lọt qua ràng buộc duy nhất của kho;
+        - siêu dữ liệu thiết kế được gửi lên máy chủ như thể nó là một tham số
+          mô phỏng.
+
+    Vì vậy `_design` bị bóc ra ở đúng ranh giới này, chỗ thiết kế trở thành
+    thiết lập chạy.
+    """
+    settings = dict(experiment.get("settings") or {})
+    settings.pop("_design", None)
+    return settings
