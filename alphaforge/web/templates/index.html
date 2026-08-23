@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alpha Forge</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #dfe3e8;
+    --text: #1c1f23;
+    --muted: #5f6b76;
+    --accent: #1f5f8b;
+    --pass: #1f7a4d;
+    --reject: #a15c1e;
+    --fail: #a12a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a;
+      --panel: #1c2126;
+      --border: #2c343c;
+      --text: #e8eaed;
+      --muted: #9aa5b1;
+      --accent: #6fb1de;
+      --pass: #57c98a;
+      --reject: #d7a35c;
+      --fail: #e07a7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 22px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 24px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 6px 0 22px; }
+  .bar span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s ease; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 18px; }
+  section h2 { font-size: 15px; margin: 0 0 12px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid currentColor; }
+  .PASSED { color: var(--pass); }
+  .REJECTED { color: var(--reject); }
+  .FAILED { color: var(--fail); }
+  .RUNNING, .PENDING, .SIMULATED, .SUBMITTED { color: var(--muted); }
+  footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Alpha Forge</h1>
+<div class="sub">Bảng theo dõi tiến độ mô phỏng và xếp hạng alpha. Dữ liệu làm mới mỗi 5 giây.</div>
+
+<div class="grid" id="cards"></div>
+<div class="bar"><span id="progressBar"></span></div>
+
+<section>
+  <h2>Xếp hạng theo điểm tổng hợp</h2>
+  <div class="scroll"><table id="topTable">
+    <thead><tr>
+      <th>Mã alpha</th><th>Biểu thức</th><th>Trạng thái</th>
+      <th class="num">Điểm</th><th class="num">Sharpe</th><th class="num">Fitness</th>
+      <th class="num">Turnover</th><th class="num">Tự tương quan</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Hoạt động gần đây</h2>
+  <div class="scroll"><table id="recentTable">
+    <thead><tr>
+      <th>Thời điểm</th><th>Biểu thức</th><th>Trạng thái</th><th>Ghi chú</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Trí nhớ nghiên cứu</h2>
+  <p class="hint">
+    Số liệu dưới đây tính từ alpha đã nộp trên BRAIN và alpha do hệ thống sinh ra.
+    Trung vị được ưu tiên hơn trung bình vì phân phối chỉ số có đuôi dày. Cỡ mẫu
+    nhỏ thì con số chỉ mang tính tham khảo.
+  </p>
+  <div class="cards" id="researchCards"></div>
+</section>
+
+<section>
+  <h2>Họ cấu trúc cho kết quả tốt nhất</h2>
+  <p class="hint">Chỉ xếp hạng họ có đủ cỡ mẫu. Tỷ lệ đạt tính trên toàn bộ alpha, kể cả alpha hỏng.</p>
+  <div class="scroll"><table id="bestTable">
+    <thead><tr>
+      <th>Họ cấu trúc</th><th>Số alpha</th><th>Đạt</th><th>Tỷ lệ đạt</th>
+      <th>Sharpe trung vị</th><th>Phân vị 25</th><th>Phân vị 75</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Họ cấu trúc cho kết quả kém</h2>
+  <p class="hint">Bộ sinh tự hạ ưu tiên các họ này. Chúng không bị loại hẳn vì thị trường có thể đổi trạng thái.</p>
+  <div class="scroll"><table id="worstTable">
+    <thead><tr>
+      <th>Họ cấu trúc</th><th>Số alpha</th><th>Đạt</th><th>Tỷ lệ đạt</th><th>Sharpe trung vị</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Khoảng trống nghiên cứu</h2>
+  <p class="hint">Họ còn ít alpha nhưng đã cho tín hiệu khả quan, đáng dành thêm hạn mức mô phỏng.</p>
+  <div class="scroll"><table id="gapsTable">
+    <thead><tr>
+      <th>Họ cấu trúc</th><th>Số alpha đã thử</th><th>Sharpe trung vị</th><th>Tỷ lệ đạt</th><th>Ưu tiên</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Lịch sử nộp trên BRAIN</h2>
+  <div class="scroll"><table id="submissionsTable">
+    <thead><tr>
+      <th>Ngày nộp</th><th>Mã alpha</th><th>Trạng thái</th><th>Khu vực</th>
+      <th>Biểu thức</th><th>Sharpe</th><th>Fitness</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Dự án nghiên cứu</h2>
+  <div class="scroll"><table id="projectsTable">
+    <thead><tr>
+      <th>Dự án</th><th>Nhóm</th><th>Mục tiêu</th><th>Giả thuyết</th><th>Thí nghiệm</th><th>Trạng thái</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Tương quan</h2>
+  <div class="scroll"><table id="correlationTable">
+    <thead><tr>
+      <th>Mã alpha</th><th>Biểu thức</th><th>Tự tương quan</th><th>Tương quan sản phẩm</th><th>Lý do loại</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<footer>Điểm tổng hợp chỉ dùng để xếp thứ tự ưu tiên xem xét, không thay thế phán đoán của người nghiên cứu.</footer>
+
+<script>
+const LABELS = {
+  total: "Tổng biểu thức",
+  PENDING: "Đang chờ",
+  RUNNING: "Đang chạy",
+  PASSED: "Đạt ngưỡng",
+  REJECTED: "Bị loại",
+  FAILED: "Lỗi",
+  pass_rate: "Tỷ lệ đạt"
+};
+
+function num(value, digits) {
+  if (value === null || value === undefined || value === "") return "";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(digits) : String(value);
+}
+
+function shorten(text, max) {
+  if (!text) return "";
+  return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+async function refresh() {
+  try {
+    const [stats, top, recent] = await Promise.all([
+      fetch("/api/stats").then(r => r.json()),
+      fetch("/api/top?limit=25").then(r => r.json()),
+      fetch("/api/recent?limit=25").then(r => r.json())
+    ]);
+
+    const counts = stats.counts || {};
+    const cards = [
+      ["total", stats.total],
+      ["PENDING", counts.PENDING],
+      ["RUNNING", counts.RUNNING],
+      ["PASSED", counts.PASSED],
+      ["REJECTED", counts.REJECTED],
+      ["FAILED", counts.FAILED],
+      ["pass_rate", stats.pass_rate + " %"]
+    ];
+    document.getElementById("cards").innerHTML = cards.map(([key, value]) =>
+      `<div class="card"><div class="label">${LABELS[key]}</div><div class="value">${value ?? 0}</div></div>`
+    ).join("");
+    document.getElementById("progressBar").style.width = (stats.progress || 0) + "%";
+
+    document.querySelector("#topTable tbody").innerHTML = (top.items || []).map(item => {
+      const m = item.metrics || {};
+      return `<tr>
+        <td>${item.alpha_id || ""}</td>
+        <td><code title="${(item.expression || "").replace(/"/g, "&quot;")}">${shorten(item.expression, 70)}</code></td>
+        <td><span class="tag ${item.status}">${item.status}</span></td>
+        <td class="num">${num(item.score, 3)}</td>
+        <td class="num">${num(m.sharpe, 3)}</td>
+        <td class="num">${num(m.fitness, 3)}</td>
+        <td class="num">${num(m.turnover, 3)}</td>
+        <td class="num">${num(item.self_correlation, 3)}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="8">Chưa có dữ liệu.</td></tr>`;
+
+    document.querySelector("#recentTable tbody").innerHTML = (recent.items || []).map(item =>
+      `<tr>
+        <td>${(item.updated_at || "").replace("T", " ").replace("+00:00", "")}</td>
+        <td><code>${shorten(item.expression, 60)}</code></td>
+        <td><span class="tag ${item.status}">${item.status}</span></td>
+        <td>${shorten(item.reject_reason || "", 90)}</td>
+      </tr>`
+    ).join("") || `<tr><td colspan="4">Chưa có dữ liệu.</td></tr>`;
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function famLabel(value) {
+  // Vân tay là chuỗi băm dài. Rút gọn để bảng đọc được, giữ nguyên ở thuộc tính
+  // title để có thể sao chép đầy đủ khi cần tra cứu.
+  return value ? String(value).slice(0, 12) : "";
+}
+
+function rows(tableId, items, render, colspan) {
+  const html = (items || []).map(render).join("");
+  document.querySelector(`#${tableId} tbody`).innerHTML =
+    html || `<tr><td colspan="${colspan}">Chưa có dữ liệu. Chạy: alphaforge history scan</td></tr>`;
+}
+
+async function refreshResearch() {
+  try {
+    const [report, families, gaps, submissions, projects, correlation] = await Promise.all([
+      fetch("/api/history/report").then(r => r.json()),
+      fetch("/api/research/families?limit=50").then(r => r.json()),
+      fetch("/api/research/gaps?limit=20").then(r => r.json()),
+      fetch("/api/submissions?limit=50").then(r => r.json()),
+      fetch("/api/research/projects").then(r => r.json()),
+      fetch("/api/correlation?limit=50").then(r => r.json())
+    ]);
+
+    const a = report.analysis || {};
+    const sharpe = (a.metrics || {}).sharpe || {};
+    const counts = a.counts || {};
+    const researchCards = [
+      ["Alpha lịch sử", report.total ?? 0],
+      ["Đạt", counts.passed ?? 0],
+      ["Bị loại", counts.rejected ?? 0],
+      ["Lỗi", counts.failed ?? 0],
+      ["Sharpe trung vị", num(sharpe.median, 3) || "—"],
+      ["Sharpe phân vị 75", num(sharpe.p75, 3) || "—"],
+      ["Họ cấu trúc", ((a.distribution || {}).family || []).length]
+    ];
+    document.getElementById("researchCards").innerHTML = researchCards.map(([label, value]) =>
+      `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`
+    ).join("");
+
+    rows("bestTable", families.high_performing, item => `<tr>
+      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
+      <td class="num">${item.count}</td>
+      <td class="num">${item.passed}</td>
+      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
+      <td class="num">${num(item.sharpe.median, 3)}</td>
+      <td class="num">${num(item.sharpe.p25, 3)}</td>
+      <td class="num">${num(item.sharpe.p75, 3)}</td>
+    </tr>`, 7);
+
+    rows("worstTable", families.low_performing, item => `<tr>
+      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
+      <td class="num">${item.count}</td>
+      <td class="num">${item.passed}</td>
+      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
+      <td class="num">${num(item.sharpe.median, 3)}</td>
+    </tr>`, 5);
+
+    rows("gapsTable", gaps.items, item => `<tr>
+      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
+      <td class="num">${item.count}</td>
+      <td class="num">${num(item.median_sharpe, 3)}</td>
+      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
+      <td class="num">${num(item.priority, 3)}</td>
+    </tr>`, 5);
+
+    rows("submissionsTable", submissions.items, item => `<tr>
+      <td>${item.submitted || "—"}</td>
+      <td>${item.alpha_id || ""}</td>
+      <td><span class="tag">${item.status || ""}</span></td>
+      <td>${item.region || ""}</td>
+      <td><code title="${(item.expression || "").replace(/"/g, "&quot;")}">${shorten(item.expression, 50)}</code></td>
+      <td class="num">${num(item.sharpe, 3)}</td>
+      <td class="num">${num(item.fitness, 3)}</td>
+    </tr>`, 7);
+
+    rows("projectsTable", projects.items, item => `<tr>
+      <td>${item.name || ""}</td>
+      <td>${item.family || ""}</td>
+      <td>${shorten(item.objective, 60)}</td>
+      <td class="num">${(item.hypotheses || []).length}</td>
+      <td class="num">${(item.hypotheses || []).reduce((sum, h) => sum + (h.experiments || []).length, 0)}</td>
+      <td><span class="tag">${item.status || ""}</span></td>
+    </tr>`, 6);
+
+    rows("correlationTable", correlation.items, item => `<tr>
+      <td>${item.alpha_id || ""}</td>
+      <td><code>${shorten(item.expression, 50)}</code></td>
+      <td class="num">${num(item.self_correlation, 3)}</td>
+      <td class="num">${num(item.prod_correlation, 3)}</td>
+      <td>${shorten(item.reject_reason || "", 60)}</td>
+    </tr>`, 5);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+refresh();
+refreshResearch();
+setInterval(refresh, 5000);
+// Phần nghiên cứu thay đổi chậm hơn nhiều so với hàng đợi mô phỏng, và mỗi lượt
+// làm mới phải quét lại toàn bộ lịch sử, nên giãn chu kỳ ra để không chiếm CPU.
+setInterval(refreshResearch, 60000);
+</script>
+</body>
+</html>
