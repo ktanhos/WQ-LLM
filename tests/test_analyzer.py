@@ -202,3 +202,32 @@ def test_research_gaps_prefer_promising_but_lightly_tested_families():
 def test_research_gaps_respects_limit():
     rows = [_row(f"F{i}", "ACTIVE", 1.5) for i in range(30)]
     assert len(research_gaps(analyze(rows), limit=5)) == 5
+
+
+def test_a_family_is_never_both_best_and_worst():
+    """Hai nhóm phải rời nhau, kể cả khi kho chỉ có vài họ đủ cỡ mẫu.
+
+    Trước đây cả hai nhóm đều cắt từ cùng một danh sách xếp hạng, nên khi chỉ
+    có một họ đủ cỡ mẫu thì nó xuất hiện ở cả "tốt nhất" lẫn "kém nhất" và bảng
+    theo dõi tự mâu thuẫn với chính nó.
+    """
+    rows = [_row("ONLY", "ACTIVE", 0.2) for _ in range(10)]
+    result = analyze(rows, min_sample=5)
+    best = {item["family"] for item in result["high_performing_structures"]}
+    worst = {item["family"] for item in result["low_performing_structures"]}
+    assert not (best & worst)
+    # Họ duy nhất đủ cỡ mẫu vẫn phải được xếp hạng, không bị bỏ khỏi cả hai nhóm.
+    assert best | worst == {"ONLY"}
+
+
+def test_best_and_worst_stay_disjoint_with_many_families():
+    rows = []
+    for index in range(6):
+        rows += [_row(f"F{index}", "ACTIVE", 0.5 + index * 0.3) for _ in range(6)]
+    result = analyze(rows, min_sample=5)
+    best = [item["family"] for item in result["high_performing_structures"]]
+    worst = [item["family"] for item in result["low_performing_structures"]]
+    assert not (set(best) & set(worst))
+    # Họ Sharpe cao nhất phải nằm ở nhóm trên, thấp nhất ở nhóm dưới.
+    assert best[0] == "F5"
+    assert worst[0] == "F0"

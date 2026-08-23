@@ -222,6 +222,52 @@ class ResearchStore:
             result.append(item)
         return result
 
+    def experiment_detail(self, experiment_id: int) -> Optional[Dict[str, Any]]:
+        """Thí nghiệm kèm thiết kế, biến thể và alpha đã sinh ra từ nó.
+
+        Dòng lệnh và bảng theo dõi cùng gọi hàm này, để hai nơi không bao giờ
+        mô tả một thí nghiệm theo hai cách khác nhau.
+
+        Không dùng `ExperimentReport` ở đây vì báo cáo cần kết quả mô phỏng,
+        còn màn hình chi tiết phải trả lời được ngay cả khi thí nghiệm vừa
+        thiết kế xong và chưa có alpha nào chạy.
+        """
+        experiment = self.get_experiment(int(experiment_id))
+        if experiment is None:
+            return None
+
+        settings = dict(experiment.get("settings") or {})
+        # Thiết kế nằm lồng trong settings chứ không có cột riêng. Tách ra để
+        # người đọc phân biệt được thiết kế với thiết lập mô phỏng.
+        design = settings.pop("_design", {})
+        experiment["settings"] = settings
+        # Bỏ cột JSON thô: nó lặp lại nguyên phần vừa tách ra, kể cả `_design`,
+        # khiến người đọc thấy thiết kế ở hai chỗ với hai hình dạng khác nhau.
+        experiment.pop("settings_json", None)
+
+        connection = self.connect()
+        try:
+            alphas = [dict(row) for row in connection.execute(
+                "SELECT id, local_id, alpha_id, variant_id, status, evaluation_status,"
+                " score, expression FROM alphas WHERE experiment_id = ? ORDER BY id",
+                (int(experiment_id),),
+            ).fetchall()]
+        finally:
+            connection.close()
+
+        counts: Dict[str, int] = {}
+        for row in alphas:
+            key = str(row.get("status") or "UNKNOWN")
+            counts[key] = counts.get(key, 0) + 1
+
+        return {
+            "experiment": experiment,
+            "design": design,
+            "variants": self.list_variants(int(experiment_id)),
+            "alphas": alphas,
+            "status_counts": counts,
+        }
+
     # ------------------------------------------------------------------
     # Phả hệ alpha
     # ------------------------------------------------------------------

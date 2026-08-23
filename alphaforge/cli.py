@@ -36,7 +36,7 @@ from .research.plan import GenerationPlan, PlanError
 from .research.priority import ResearchPriority
 from .research.report import ExperimentReport
 from .research.store import ResearchStore
-from .storage.db import Database, EvaluationStatus, Status, load_json_dict
+from .storage.db import Database, EvaluationStatus, Status
 
 logger = logging.getLogger("alphaforge")
 
@@ -965,7 +965,7 @@ def cmd_experiment(settings: Settings, args: argparse.Namespace) -> int:
         return 0
 
     if args.subcommand == "show":
-        detail = _experiment_detail(db, store, args.experiment_id)
+        detail = store.experiment_detail(args.experiment_id)
         if detail is None:
             print(f"Không có thí nghiệm {args.experiment_id}.", file=sys.stderr)
             return 1
@@ -1048,56 +1048,6 @@ def cmd_experiment(settings: Settings, args: argparse.Namespace) -> int:
         return 0
 
     return 1
-
-
-def _experiment_detail(
-    db: Database, store: ResearchStore, experiment_id: int
-) -> Optional[Dict[str, Any]]:
-    """Gộp thí nghiệm, thiết kế đã lưu, biến thể và alpha đã sinh.
-
-    Thiết kế nằm trong `settings["_design"]` chứ không ở cột riêng, nên phải
-    lấy ra ở đây. Đọc trực tiếp bảng `alphas` thay vì qua `ExperimentReport`
-    vì lệnh này phải trả lời được cả khi thí nghiệm chưa có kết quả nào.
-    """
-    experiment = store.get_experiment(int(experiment_id))
-    if experiment is None:
-        return None
-
-    settings = dict(experiment.get("settings") or {})
-    design = settings.pop("_design", {})
-    experiment["settings"] = settings
-
-    connection = db.connect()
-    try:
-        variants = []
-        for row in connection.execute(
-            "SELECT id, label, expression, parameters_json, alpha_id, result_status"
-            " FROM experiment_variants WHERE experiment_id = ? ORDER BY id",
-            (int(experiment_id),),
-        ).fetchall():
-            variant = dict(row)
-            variant["parameters"] = load_json_dict(variant.pop("parameters_json"))
-            variants.append(variant)
-        alphas = [dict(row) for row in connection.execute(
-            "SELECT id, local_id, alpha_id, variant_id, status, evaluation_status,"
-            " score, expression FROM alphas WHERE experiment_id = ? ORDER BY id",
-            (int(experiment_id),),
-        ).fetchall()]
-    finally:
-        connection.close()
-
-    counts: Dict[str, int] = {}
-    for row in alphas:
-        key = str(row.get("status") or "UNKNOWN")
-        counts[key] = counts.get(key, 0) + 1
-
-    return {
-        "experiment": experiment,
-        "design": design,
-        "variants": variants,
-        "alphas": alphas,
-        "status_counts": counts,
-    }
 
 
 # ----------------------------------------------------------------------

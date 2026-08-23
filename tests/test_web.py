@@ -15,6 +15,7 @@ from alphaforge.research.models import AlphaLineage, Experiment, Hypothesis, Res
 from alphaforge.research.store import ResearchStore
 from alphaforge.storage.db import Database, Status
 from alphaforge.web.app import create_app
+from conftest import insert_historical
 
 
 @pytest.fixture()
@@ -213,3 +214,111 @@ def test_priorities_endpoint_includes_reasons(client):
     assert items
     assert "reasons" in items[0]
     assert "components" in items[0]
+
+
+# Các màn hình nghiên cứu bổ sung
+# ======================================================================
+@pytest.mark.parametrize(
+    "path",
+    ["/api/research/overview", "/api/research/next"],
+)
+def test_new_research_endpoints_work_on_empty_database(client, path):
+    app, _ = client
+    assert app.get(path).status_code == 200
+
+
+def test_overview_separates_generated_from_simulated(client):
+    """Kho rỗng vẫn phải trả đủ khóa, và hai con số phải tách nhau."""
+    app, db = client
+    _seed_history(db, "A1", "fam1")
+    db.add_alphas(["rank(ts_mean(volume, 20))"], {"region": "USA"})
+
+    payload = app.get("/api/research/overview").json()
+    counts = payload["statistics"]["counts"]
+    # Alpha vừa sinh được tính là đã sinh nhưng chưa mô phỏng.
+    assert counts["tested"] == 2
+    assert counts["simulated"] == 1
+    assert "field" in payload["top_values"]
+    assert payload["candidates"] == 0
+
+
+def test_next_endpoint_returns_suggestions_with_reasons(client):
+    """Lịch sử lệch hẳn về một trường thì phải đề xuất được hướng khác."""
+    app, db = client
+    for index in range(30):
+        insert_historical(db, f"rank(ts_rank(returns, {5 + index}))",
+                          alpha_id=f"R{index}", status="FAILED", sharpe=0.2)
+    insert_historical(db, "rank(ts_mean(volume, 20))", alpha_id="V1")
+    items = app.get("/api/research/next").json()["items"]
+    assert items
+    assert items[0]["reasons"]
+    assert "suggested_experiment" in items[0]
+
+
+def test_experiment_detail_endpoint_returns_design_and_variants(client):
+    app, db = client
+    store = ResearchStore(db)
+    research_id = store.create_project(ResearchProject(name="P"))
+    hypothesis_id = store.create_hypothesis(
+        Hypothesis(research_id=research_id, statement="S")
+    )
+    from alphaforge.research.experiment import ExperimentDesign, ExperimentEngine
+
+    result = ExperimentEngine(store).create(
+        ExperimentDesign(
+            hypothesis_id=hypothesis_id,
+            name="Cửa sổ",
+            base_expression="rank(ts_mean(close, {lookback}))",
+            variable="lookback",
+            values=[20, 60],
+        )
+    )
+    payload = app.get(f"/api/experiments/{result['experiment_id']}").json()
+    assert payload["design"]["values"] == [20, 60]
+    assert len(payload["variants"]) == 2
+    # Thí nghiệm vừa thiết kế thì chưa có alpha nào; điểm cuối vẫn phải trả lời.
+    assert payload["alphas"] == []
+    assert payload["status_counts"] == {}
+
+
+def test_experiment_detail_endpoint_returns_404_for_unknown(client):
+    app, _ = client
+    assert app.get("/api/experiments/999").status_code == 404
+
+
+def test_lineage_endpoint_accepts_local_id(client):
+    """Alpha chưa mô phỏng chỉ có mã cục bộ, và vẫn phải tra cứu được."""
+    app, db = client
+    db.add_alphas(["rank(close)"], {"region": "USA"})
+    row_id = db.fetch_by_status(Status.PENDING)[0].id
+    db.update_alpha(row_id, local_id="LOCAL-00000001")
+    ResearchStore(db).save_lineage(
+        AlphaLineage(alpha_id="LOCAL-00000001", generation_strategy="template")
+    )
+
+    payload = app.get("/api/research/lineage/LOCAL-00000001").json()
+    assert payload["alpha"]["expression"] == "rank(close)"
+    assert [item["alpha_id"] for item in payload["ancestry"]] == ["LOCAL-00000001"]
+
+
+def test_lineage_endpoint_of_unknown_alpha_is_empty(client):
+    app, _ = client
+    payload = app.get("/api/research/lineage/KHONG-CO").json()
+    assert payload["alpha"] is None
+    assert payload["ancestry"] == []
+
+
+def test_dashboard_declares_every_screen(client):
+    """Thanh điều hướng và các màn hình phải khớp nhau.
+
+    Một nút trỏ tới màn hình không tồn tại sẽ không báo lỗi trong trình duyệt,
+    chỉ hiện ra trang trắng, nên phải bắt ở đây.
+    """
+    app, _ = client
+    html = app.get("/").text
+    import re
+
+    buttons = set(re.findall(r'<button data-screen="([a-z]+)"', html))
+    screens = set(re.findall(r'<div class="screen" data-screen="([a-z]+)"', html))
+    assert buttons == screens
+    assert {"overview", "gaps", "priorities", "experiments", "lineage"} <= screens

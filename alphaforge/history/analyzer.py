@@ -219,6 +219,14 @@ def analyze(
         key=lambda item: item["sharpe"]["median"],
         reverse=True,
     )
+    # Hai nhóm phải rời nhau. Cắt mười đầu và mười cuối của cùng một danh sách
+    # sẽ khiến một họ duy nhất xuất hiện ở cả "tốt nhất" lẫn "kém nhất" khi kho
+    # còn ít họ, và bảng theo dõi khi đó tự mâu thuẫn với chính nó.
+    # Làm tròn lên để một họ đủ cỡ mẫu duy nhất vẫn được xếp vào nhóm trên,
+    # thay vì rơi xuống nhóm dưới chỉ vì không có họ nào khác để so.
+    half = (len(by_median_sharpe) + 1) // 2
+    high_performing = by_median_sharpe[:half][:10]
+    low_performing = list(reversed(by_median_sharpe[half:]))[:10]
 
     windows_by_family: Dict[str, Dict[str, Any]] = {}
     for row in rows:
@@ -264,8 +272,8 @@ def analyze(
             "family": families,
             "template": templates,
         },
-        "high_performing_structures": by_median_sharpe[:10],
-        "low_performing_structures": list(reversed(by_median_sharpe))[:10],
+        "high_performing_structures": high_performing,
+        "low_performing_structures": low_performing,
         "frequently_tested_structures": [
             item for item in families if item["count"] >= saturated_threshold
         ][:20],
