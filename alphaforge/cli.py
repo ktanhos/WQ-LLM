@@ -32,11 +32,11 @@ from .research.memory import DIMENSIONS as MEMORY_DIMENSIONS
 from .research.memory import SOURCES as MEMORY_SOURCES
 from .research.memory import ResearchMemory
 from .research.models import Experiment, Hypothesis, ResearchProject
-from .research.plan import GenerationPlan, PlanError
+from .research.plan import PlanError
 from .research.priority import ResearchPriority
 from .research.report import ExperimentReport
 from .research.store import ResearchStore
-from .storage.db import Database, EvaluationStatus, Status
+from .storage.db import Database, Status
 
 logger = logging.getLogger("alphaforge")
 

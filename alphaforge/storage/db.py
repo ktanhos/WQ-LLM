@@ -25,7 +25,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional
 
 
 def utc_now() -> str:
@@ -878,11 +878,21 @@ def load_json_dict(raw: Any) -> Dict[str, Any]:
 _load_json = load_json_dict
 
 
-def _maybe_float(value: Any) -> Optional[float]:
+def maybe_float(value: Any) -> Optional[float]:
+    """Ép về số thực, trả về None thay vì ném lỗi khi không ép được.
+
+    Công khai vì bốn mô đun từng giữ bản sao riêng của đúng hàm này. Chỉ số do
+    máy chủ trả về có thể thiếu, là chuỗi rỗng hoặc null, nên mọi chỗ đọc chỉ
+    số đều cần cùng một cách xử lý.
+    """
     try:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+#: Tên cũ, giữ cho mã trong gói đang gọi.
+_maybe_float = maybe_float
 
 
 def _maybe_int(value: Any) -> Optional[int]:

@@ -119,13 +119,16 @@ Kho tạo bởi phiên bản trước được **di trú tự động**: cột c
 
 ## 3. Vân tay cấu trúc
 
-Băm toàn bộ chuỗi biểu thức không trả lời được câu hỏi nghiên cứu. Mô đun `history/fingerprint.py` tạo ba mức lồng nhau:
+Băm toàn bộ chuỗi biểu thức không trả lời được câu hỏi nghiên cứu. Mô đun `history/fingerprint.py` tạo bốn mức lồng nhau:
 
 | Mức | Trừu tượng hóa | `ts_mean(returns,20)` với `ts_mean(returns,60)` | với `ts_mean(volume,20)` |
 | --- | --- | --- | --- |
 | `exact` | chỉ chuẩn hóa khoảng trắng và chữ hoa thường | khác nhau | khác nhau |
+| `parameter` | giữ cả cửa sổ, hằng số và nhóm phân loại | khác nhau | khác nhau |
 | `family` | hằng số thành `#`, giữ trường dữ liệu | **giống nhau** | khác nhau |
 | `template` | hằng số và trường dữ liệu đều trừu tượng | giống nhau | **giống nhau** |
+
+Mức `parameter` tồn tại vì bậc thẩm định cần phân biệt hai tình huống trái ngược: hai lô sinh tự do tình cờ ra cùng ý tưởng thì nên chặn, còn một thí nghiệm quét nhiều cửa sổ trong cùng một họ thì **không** được chặn, vì đó chính là mục đích của nó.
 
 Nhờ vậy hệ thống trả lời được: cấu trúc này đã nghiên cứu chưa, có bao nhiêu alpha tương tự, đã thử cửa sổ nào, cửa sổ nào tốt nhất, trường dữ liệu nào đã khai thác, tổ hợp toán tử nào đang bị lặp nhiều.
 
@@ -171,6 +174,13 @@ python -m alphaforge.cli history report --full --out bao_cao.json
 # Khoảng trống đáng khảo sát tiếp
 python -m alphaforge.cli history gaps --limit 20
 
+# Hệ thống đã nghiên cứu những gì: đã sinh, đã mô phỏng, đạt, độ phủ từng chiều
+python -m alphaforge.cli research memory
+python -m alphaforge.cli research memory --dimension field operator --top 15
+
+# Nên nghiên cứu gì tiếp, kèm lý do và thí nghiệm gợi ý
+python -m alphaforge.cli research next
+
 # Biểu thức này đã được nghiên cứu chưa
 python -m alphaforge.cli history check "rank(ts_mean(returns, 20))" --duplicates
 ```
@@ -196,15 +206,19 @@ python -m alphaforge.cli experiment design --hypothesis-id 1 --name "Lookback" \
     --base-expression "rank(ts_rank(returns, 20))" \
     --variable lookback --values 5 10 20 60 120 250
 
-# 4. Đưa biến thể vào hàng đợi, rồi mô phỏng
-python -m alphaforge.cli experiment run 1 --seed 42
+# 4. Xem trước kế hoạch sinh. Không lưu, không xếp hàng, chạy lại bao nhiêu lần cũng được.
+python -m alphaforge.cli experiment plan 1 --seed 42
+
+# 5. Đưa biến thể vào hàng đợi, rồi mô phỏng
+python -m alphaforge.cli experiment generate 1 --seed 42
 python -m alphaforge.cli run --concurrency 3
 
-# 5. Thẩm định cục bộ: chấm điểm, độ bền, lọc trùng cấu trúc. Không gọi BRAIN.
+# 6. Thẩm định cục bộ: chấm điểm, độ bền, lọc trùng cấu trúc. Không gọi BRAIN.
 python -m alphaforge.cli evaluate --robustness standard
 
-# 6. Đọc kết luận
-python -m alphaforge.cli experiment report 1
+# 7. Đọc kết luận
+python -m alphaforge.cli experiment show 1      # thiết kế, biến thể, alpha đã sinh
+python -m alphaforge.cli experiment report 1    # kết luận và bước tiếp theo
 ```
 
 Báo cáo **không khẳng định giả thuyết đúng khi cỡ mẫu chưa đủ**:
@@ -241,7 +255,19 @@ Hệ thống **không nộp thay**. `mark-submitted` chỉ ghi chép.
 python -m alphaforge.cli web --port 8000
 ```
 
-Bảng theo dõi chỉ đọc SQLite, **không bao giờ gọi BRAIN**. Có thể mở nhiều tab, tắt bật tùy ý mà không ảnh hưởng tiến trình đang chạy. Ngoài hàng đợi mô phỏng, bảng còn hiển thị: trí nhớ nghiên cứu, họ cấu trúc tốt và kém, khoảng trống nghiên cứu, lịch sử nộp, dự án nghiên cứu và tương quan.
+Bảng theo dõi chỉ đọc SQLite, **không bao giờ gọi BRAIN**. Có thể mở nhiều tab, tắt bật tùy ý mà không ảnh hưởng tiến trình đang chạy.
+
+Bảy màn hình, mỗi màn hình chỉ nạp dữ liệu khi được mở lần đầu:
+
+| Màn hình | Trả lời câu hỏi |
+| --- | --- |
+| Hàng đợi | lô mô phỏng đang chạy tới đâu |
+| Tổng quan nghiên cứu | đã nghiên cứu những gì, độ phủ từng chiều, nên nghiên cứu gì tiếp |
+| Khoảng trống | còn thiếu bằng chứng ở đâu, vì sao |
+| Ưu tiên | vùng nào đáng khảo sát trước, kèm lý do |
+| Thí nghiệm | thiết kế, biến thể và kết quả của từng thí nghiệm |
+| Phả hệ alpha | alpha này sinh ra từ đâu, tra bằng mã cục bộ hoặc mã nền tảng |
+| Alpha lịch sử | đã nộp gì trên BRAIN, dự án nghiên cứu, tương quan |
 
 ### Mô hình ngôn ngữ (tùy chọn)
 

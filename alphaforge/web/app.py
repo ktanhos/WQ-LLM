@@ -22,7 +22,7 @@ from ..research.memory import ResearchMemory
 from ..research.priority import ResearchPriority
 from ..research.report import ExperimentReport
 from ..research.store import ResearchStore
-from ..storage.db import Database, EvaluationStatus, Status
+from ..storage.db import Database, Status
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "index.html"
 

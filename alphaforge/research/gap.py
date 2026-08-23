@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .memory import ResearchMemory
-from .priority import PriorityScore, PriorityWeights, ResearchPriority
+from .priority import PriorityScore, ResearchPriority
 
 #: Các loại thiếu hụt được phát hiện.
 GAP_FIELD = "field_gap"

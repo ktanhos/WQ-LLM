@@ -1,6 +1,7 @@
 """Kiểm thử vân tay cấu trúc và phát hiện trùng lặp."""
 
 from alphaforge.history.fingerprint import (
+    LEVELS,
     RELATION_EXACT,
     RELATION_FIELD,
     RELATION_PARAMETER,
@@ -10,6 +11,9 @@ from alphaforge.history.fingerprint import (
     family_of,
     fingerprint,
     find_duplicates,
+    levels,
+    same_structure_different_parameter,
+    same_template_different_field,
     template_of,
 )
 
@@ -171,3 +175,53 @@ def test_find_duplicates_orders_strictest_relation_first():
 
 def test_find_duplicates_returns_empty_for_no_matches():
     assert find_duplicates("rank(close)", []) == []
+
+
+# ----------------------------------------------------------------------
+# Hai câu hỏi nghiên cứu mà bốn mức vân tay tồn tại để trả lời
+# ----------------------------------------------------------------------
+def test_levels_returns_all_four_keys():
+    keys = levels("rank(ts_mean(close, 20))")
+    assert set(keys) == set(LEVELS)
+    assert len(set(keys.values())) >= 2
+
+
+def test_same_structure_different_parameter_spots_a_window_sweep():
+    """"Cấu trúc này đã thử với cửa sổ khác chưa" là câu hỏi của thí nghiệm."""
+    assert same_structure_different_parameter(
+        "rank(ts_mean(close, 20))", "rank(ts_mean(close, 60))"
+    )
+
+
+def test_an_expression_is_not_a_parameter_variant_of_itself():
+    assert not same_structure_different_parameter(
+        "rank(ts_mean(close, 20))", "rank(ts_mean(close, 20))"
+    )
+
+
+def test_a_different_field_is_not_a_parameter_variant():
+    """Đổi trường dữ liệu là đổi họ, không phải đổi tham số trong cùng họ."""
+    assert not same_structure_different_parameter(
+        "rank(ts_mean(close, 20))", "rank(ts_mean(volume, 20))"
+    )
+
+
+def test_same_template_different_field_spots_a_field_swap():
+    assert same_template_different_field(
+        "rank(ts_mean(close, 20))", "rank(ts_mean(volume, 20))"
+    )
+
+
+def test_a_window_change_alone_is_not_a_field_swap():
+    assert not same_template_different_field(
+        "rank(ts_mean(close, 20))", "rank(ts_mean(close, 60))"
+    )
+
+
+def test_unrelated_expressions_match_at_no_level():
+    assert not same_structure_different_parameter(
+        "rank(ts_mean(close, 20))", "zscore(ts_std(volume, 60))"
+    )
+    assert not same_template_different_field(
+        "rank(ts_mean(close, 20))", "zscore(ts_std(volume, 60))"
+    )

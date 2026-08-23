@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from ..history.analyzer import describe
-from ..storage.db import Database, EvaluationStatus, Status
+from ..storage.db import Database, Status
 from .memory import ResearchMemory
 from .store import ResearchStore
 

@@ -25,7 +25,7 @@ import statistics
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..history.fingerprint import fingerprint
 from ..storage.db import Database, EvaluationStatus, Status, load_json_dict as _load_json

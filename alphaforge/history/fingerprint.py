@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import Counter
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
 #: Định danh, số thực, hoặc một ký tự dấu.
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*|\d+(?:\.\d+)?|[^\sA-Za-z0-9_]")

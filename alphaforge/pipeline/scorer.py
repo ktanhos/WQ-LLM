@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from ..storage.db import maybe_float as _as_float
+
 
 @dataclass
 class ScoreResult:
@@ -131,10 +133,3 @@ class Scorer:
         return round(score, 6)
 
 
-def _as_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None

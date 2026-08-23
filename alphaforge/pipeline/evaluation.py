@@ -20,12 +20,12 @@ nghiên cứu mới chuyển tiếp được.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
-from ..history.fingerprint import compare, fingerprint
+from ..history.fingerprint import fingerprint
 from ..storage.db import Database, EvaluationStatus, Status, utc_now
-from .robustness import RobustnessChecker, RobustnessReport
+from .robustness import RobustnessChecker
 from .scorer import Scorer
 
 logger = logging.getLogger(__name__)

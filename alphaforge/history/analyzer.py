@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import statistics
 from collections import Counter, defaultdict
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Sequence
 
 #: Số alpha tối thiểu để một họ cấu trúc được xếp hạng thay vì chỉ được liệt kê.
 MIN_SAMPLE_FOR_RANKING = 5

@@ -224,7 +224,6 @@ class RuleBasedResearchAdvisor(ResearchAdvisor):
         Chỉ đề xuất, không tạo thí nghiệm. Người đọc quyết định có chạy hay không.
         """
         variable = GAP_TO_VARIABLE.get(item.kind, "lookback")
-        dimension = GAP_DIMENSIONS.get(item.kind, "family")
 
         if variable == "field":
             # Thiếu ở chiều trường dữ liệu thì so chính trường đó với trường đã quen.

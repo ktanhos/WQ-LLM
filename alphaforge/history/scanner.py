@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..brain.errors import BrainError
 from ..storage.db import Database, utc_now
+from ..storage.db import maybe_float as _as_float
 from .fingerprint import fingerprint
 
 logger = logging.getLogger(__name__)
@@ -465,11 +466,6 @@ def _metrics_changed(existing, row: Dict[str, Any]) -> bool:
     return False
 
 
-def _as_float(value: Any) -> Optional[float]:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _as_int(value: Any) -> Optional[int]:
