@@ -92,6 +92,9 @@ class AlphaRecord:
     status: str = Status.PENDING
     attempts: int = 0
     alpha_id: Optional[str] = None
+    #: Định danh cục bộ, có ngay khi sinh. Alpha ID của nền tảng chỉ xuất hiện
+    #: sau khi mô phỏng, nên không dùng làm khóa phả hệ được.
+    local_id: Optional[str] = None
     score: Optional[float] = None
     metrics: Dict[str, Any] = field(default_factory=dict)
     self_correlation: Optional[float] = None
@@ -151,6 +154,7 @@ CREATE TABLE IF NOT EXISTS alphas (
     status TEXT NOT NULL DEFAULT 'PENDING',
     attempts INTEGER NOT NULL DEFAULT 0,
     alpha_id TEXT,
+    local_id TEXT,
     score REAL,
     metrics_json TEXT NOT NULL DEFAULT '{}',
     self_correlation REAL,
@@ -254,6 +258,7 @@ CREATE TABLE IF NOT EXISTS generation_plans (
     data_fields_json TEXT NOT NULL DEFAULT '[]',
     operators_json TEXT NOT NULL DEFAULT '[]',
     lookbacks_json TEXT NOT NULL DEFAULT '[]',
+    groups_json TEXT NOT NULL DEFAULT '[]',
     templates_json TEXT NOT NULL DEFAULT '[]',
     constraints_json TEXT NOT NULL DEFAULT '{}',
     settings_json TEXT NOT NULL DEFAULT '{}',
@@ -340,6 +345,7 @@ INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_alphas_status ON alphas(status);
 CREATE INDEX IF NOT EXISTS idx_alphas_score ON alphas(score);
 CREATE INDEX IF NOT EXISTS idx_alphas_alpha_id ON alphas(alpha_id);
+CREATE INDEX IF NOT EXISTS idx_alphas_local_id ON alphas(local_id);
 CREATE INDEX IF NOT EXISTS idx_alphas_fingerprint ON alphas(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_alphas_family ON alphas(family);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
@@ -408,7 +414,7 @@ SCHEMA_COLUMNS = _declared_columns(SCHEMA)
 _ALPHA_COLUMNS = {
     "expression", "status", "attempts", "alpha_id", "score", "self_correlation",
     "prod_correlation", "reject_reason", "error", "run_id", "experiment_id",
-    "variant_id", "parent_alpha_id", "generation_strategy", "generation_seed",
+    "local_id", "variant_id", "parent_alpha_id", "generation_strategy", "generation_seed",
     "source_type", "source_alpha_id", "plan_id", "evaluation_status", "rank",
     "validation_error", "fingerprint", "family", "template",
 }
@@ -814,6 +820,7 @@ def _to_record(row: sqlite3.Row) -> AlphaRecord:
         status=str(row["status"]),
         attempts=int(row["attempts"]),
         alpha_id=row["alpha_id"],
+        local_id=row["local_id"],
         score=row["score"],
         metrics=_load_json(row["metrics_json"]),
         self_correlation=row["self_correlation"],
@@ -846,7 +853,18 @@ def _to_dict(row: sqlite3.Row) -> Dict[str, Any]:
     return item
 
 
-def _load_json(raw: Any) -> Dict[str, Any]:
+def load_json_dict(raw: Any) -> Dict[str, Any]:
+    """Đọc một cột JSON thành từ điển, không bao giờ ném lỗi.
+
+    Công khai vì `research.memory` và `research.store` cũng đọc đúng các cột
+    này; ba bản sao của cùng một hàm từng tồn tại và lệch nhau về cách xử lý
+    đầu vào đã là từ điển.
+
+    Trả về từ điển rỗng khi dữ liệu hỏng thay vì ném lỗi: một bản ghi có JSON
+    hỏng không được làm gãy cả lượt đọc kho.
+    """
+    if isinstance(raw, dict):
+        return raw
     if not raw:
         return {}
     try:
@@ -854,6 +872,10 @@ def _load_json(raw: Any) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+#: Tên cũ, giữ cho mã trong gói đang gọi.
+_load_json = load_json_dict
 
 
 def _maybe_float(value: Any) -> Optional[float]:

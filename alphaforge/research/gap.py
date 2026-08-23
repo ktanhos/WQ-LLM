@@ -35,6 +35,8 @@ GAP_SETTING = "setting_gap"
 GAP_REGION = "region_gap"
 GAP_UNIVERSE = "universe_gap"
 GAP_NEUTRALIZATION = "neutralization_gap"
+GAP_TEMPLATE = "template_gap"
+GAP_GROUP = "group_gap"
 
 #: Chiều nghiên cứu tương ứng với từng loại thiếu hụt.
 GAP_DIMENSIONS = {
@@ -45,6 +47,8 @@ GAP_DIMENSIONS = {
     GAP_REGION: "region",
     GAP_UNIVERSE: "universe",
     GAP_NEUTRALIZATION: "neutralization",
+    GAP_TEMPLATE: "template",
+    GAP_GROUP: "group",
     GAP_SETTING: "delay",
 }
 
@@ -308,6 +312,9 @@ class ResearchGap:
         if dimension == "family":
             key = row.get("family") or row.get("fingerprint")
             return [str(key)] if key else []
+        if dimension == "group":
+            from .memory import _groups_of
+            return _groups_of(row)
         value = row.get(dimension)
         return [str(value)] if value is not None else []
 

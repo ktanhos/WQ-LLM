@@ -80,6 +80,19 @@ class ExperimentDesign:
     settings: Dict[str, Any] = field(default_factory=dict)
     #: Tiêu chí đánh giá, ví dụ {"min_sharpe": 1.25, "min_sample": 5}.
     evaluation_criteria: Dict[str, Any] = field(default_factory=dict)
+    #: Không gian tìm kiếm mà thí nghiệm cho phép bộ sinh dùng. Để trống thì
+    #: suy ra từ chính các biến thể, tức là hẹp nhất có thể.
+    fields: Sequence[str] = field(default_factory=tuple)
+    operators: Sequence[str] = field(default_factory=tuple)
+    lookbacks: Sequence[int] = field(default_factory=tuple)
+    groups: Sequence[str] = field(default_factory=tuple)
+    templates: Sequence[str] = field(default_factory=tuple)
+    #: Chiến lược sinh. Để trống thì dùng chế độ direct, tức là chỉ chạy đúng
+    #: các biến thể đã thiết kế mà không sinh thêm.
+    strategy: str = ""
+    generation_limit: Optional[int] = None
+    generation_seed: Optional[int] = None
+    constraints: Dict[str, Any] = field(default_factory=dict)
     #: Cho phép đổi nhiều biến cùng lúc. Phải khai báo tường minh.
     allow_multiple_changes: bool = False
     notes: str = ""
@@ -245,7 +258,26 @@ class ExperimentEngine:
                 base_expression=design.base_expression,
                 variable_changed=design.variable,
                 expected_effect=design.expected_effect,
-                settings=dict(design.settings),
+                settings=dict(
+                    design.settings,
+                    _design={
+                        # Giá trị của biến khảo sát được lưu ở đây chứ không
+                        # chỉ ở bảng biến thể, để đọc lại được thiết kế gốc kể
+                        # cả khi một biến thể bị loại vì trùng biểu thức đã có.
+                        "variable": design.variable,
+                        "values": list(design.values),
+                        "fields": list(design.fields),
+                        "operators": list(design.operators),
+                        "lookbacks": [int(v) for v in design.lookbacks],
+                        "groups": list(design.groups),
+                        "templates": list(design.templates),
+                        "strategy": design.strategy,
+                        "generation_limit": design.generation_limit,
+                        "generation_seed": design.generation_seed,
+                        "constraints": design.constraints,
+                        "evaluation_criteria": design.evaluation_criteria,
+                    },
+                ),
                 notes=design.notes,
             )
         )
@@ -281,6 +313,7 @@ class ExperimentEngine:
         hypothesis_id: Optional[int] = None,
         seed: Optional[int] = None,
         max_candidates: Optional[int] = None,
+        design: Optional[ExperimentDesign] = None,
     ) -> GenerationPlan:
         """Dựng kế hoạch sinh từ các biến thể đã thiết kế.
 
@@ -291,6 +324,27 @@ class ExperimentEngine:
         experiment = self.store.get_experiment(experiment_id)
         if experiment is None:
             raise ExperimentError(f"Không tìm thấy thí nghiệm {experiment_id}.")
+        # Không gian tìm kiếm được lưu kèm thí nghiệm, nên dựng lại kế hoạch
+        # sau này cho kết quả giống hệt lúc thiết kế.
+        if design is None:
+            stored = (experiment.get("settings") or {}).get("_design")
+            if stored:
+                design = ExperimentDesign(
+                    hypothesis_id=int(experiment.get("hypothesis_id") or 0),
+                    name=str(experiment.get("name") or ""),
+                    base_expression=str(experiment.get("base_expression") or ""),
+                    variable=str(experiment.get("variable_changed") or "lookback"),
+                    values=(1, 2),
+                    fields=stored.get("fields") or (),
+                    operators=stored.get("operators") or (),
+                    lookbacks=stored.get("lookbacks") or (),
+                    groups=stored.get("groups") or (),
+                    templates=stored.get("templates") or (),
+                    strategy=stored.get("strategy") or "",
+                    generation_limit=stored.get("generation_limit"),
+                    generation_seed=stored.get("generation_seed"),
+                    constraints=stored.get("constraints") or {},
+                )
         variants = self.store.list_variants(experiment_id)
         if not variants:
             raise ExperimentError(
@@ -307,19 +361,39 @@ class ExperimentEngine:
             for window in fingerprint(expression)["windows"]
         })
 
+        groups = sorted({
+            name for expression in expressions
+            for name in fingerprint(expression)["groups"]
+        })
+        operators = sorted({
+            name for expression in expressions
+            for name in fingerprint(expression)["operators"]
+        })
+
+        # Thiết kế có khai báo không gian tìm kiếm thì dùng nó, nếu không thì
+        # suy ra từ chính các biến thể, tức là hẹp nhất có thể.
+        strategy = (design.strategy if design and design.strategy else STRATEGY_DIRECT)
         plan = GenerationPlan(
-            strategy=STRATEGY_DIRECT,
-            data_fields=fields,
-            lookbacks=lookbacks,
+            strategy=strategy,
+            data_fields=list(design.fields) if design and design.fields else fields,
+            operators=list(design.operators) if design and design.operators else operators,
+            lookbacks=list(design.lookbacks) if design and design.lookbacks else lookbacks,
+            groups=list(design.groups) if design and design.groups else groups,
+            templates=list(design.templates) if design and design.templates else (),
             seed_expressions=expressions,
-            max_candidates=max_candidates or len(expressions),
-            seed=seed,
+            max_candidates=(
+                max_candidates
+                or (design.generation_limit if design and design.generation_limit else None)
+                or len(expressions)
+            ),
+            seed=seed if seed is not None else (design.generation_seed if design else None),
             settings=dict(experiment.get("settings") or {}),
             research_id=research_id,
             hypothesis_id=hypothesis_id if hypothesis_id is not None
             else experiment.get("hypothesis_id"),
             experiment_id=experiment_id,
-            constraints={"allowed_fields": fields},
+            constraints=dict(design.constraints) if design and design.constraints
+            else {"allowed_fields": fields},
             notes=f"Kế hoạch cho thí nghiệm {experiment_id}: {experiment.get('name')}",
         )
         # Ánh xạ biểu thức sang biến thể, để báo cáo quy được kết quả về đúng chỗ.

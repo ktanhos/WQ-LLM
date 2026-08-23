@@ -25,15 +25,18 @@ from .pipeline.generation import generate_and_queue
 from .pipeline.robustness import PROFILES, RobustnessChecker
 from .pipeline.runner import SimulationRunner
 from .pipeline.scorer import Scorer
+from .research.advisor import RuleBasedResearchAdvisor
 from .research.experiment import ExperimentDesign, ExperimentEngine, ExperimentError
 from .research.gap import ResearchGap
+from .research.memory import DIMENSIONS as MEMORY_DIMENSIONS
+from .research.memory import SOURCES as MEMORY_SOURCES
 from .research.memory import ResearchMemory
 from .research.models import Experiment, Hypothesis, ResearchProject
 from .research.plan import GenerationPlan, PlanError
 from .research.priority import ResearchPriority
 from .research.report import ExperimentReport
 from .research.store import ResearchStore
-from .storage.db import Database, EvaluationStatus, Status
+from .storage.db import Database, EvaluationStatus, Status, load_json_dict
 
 logger = logging.getLogger("alphaforge")
 
@@ -208,6 +211,25 @@ def _add_research_commands(sub) -> None:
     p_priorities.add_argument("--dimension", default="family",
                               choices=["family", "field", "operator", "template"])
 
+    p_memory = research_sub.add_parser(
+        "memory", help="Hệ thống đã nghiên cứu những gì và tới đâu."
+    )
+    p_memory.add_argument(
+        "--source", nargs="*", default=None, choices=sorted(MEMORY_SOURCES),
+        help="Chỉ tính trên một số nguồn bằng chứng. Mặc định là tất cả.",
+    )
+    p_memory.add_argument("--dimension", nargs="*", default=None,
+                          help="Chỉ in một số chiều, ví dụ field lookback.")
+    p_memory.add_argument("--top", type=int, default=10,
+                          help="Số giá trị hay gặp nhất in ra cho mỗi chiều.")
+    p_memory.add_argument("--json", action="store_true")
+
+    p_next = research_sub.add_parser(
+        "next", help="Nên nghiên cứu gì tiếp, kèm thí nghiệm gợi ý."
+    )
+    p_next.add_argument("--limit", type=int, default=5)
+    p_next.add_argument("--json", action="store_true")
+
 
 def _add_experiment_commands(sub) -> None:
     """Nhóm lệnh chạy và báo cáo thí nghiệm."""
@@ -232,13 +254,32 @@ def _add_experiment_commands(sub) -> None:
         help="Cho phép đổi nhiều biến cùng lúc. Kết quả sẽ khó quy kết.",
     )
 
-    p_erun = experiment_sub.add_parser(
-        "run", help="Sinh và đưa biến thể của thí nghiệm vào hàng đợi."
+    # `run` và `generate` là cùng một việc. Giữ cả hai tên vì `run` đã có từ
+    # trước và người dùng cũ đang gọi nó, còn `generate` mô tả đúng hơn: lệnh
+    # này chỉ sinh và xếp hàng, việc mô phỏng nằm ở `alphaforge run`.
+    for name, help_text in (
+        ("run", "Sinh và đưa biến thể của thí nghiệm vào hàng đợi."),
+        ("generate", "Như 'run'. Sinh biến thể và đưa vào hàng đợi."),
+    ):
+        p_erun = experiment_sub.add_parser(name, help=help_text)
+        p_erun.add_argument("experiment_id", type=int)
+        p_erun.add_argument("--seed", type=int, default=None)
+        p_erun.add_argument("--max-candidates", type=int, default=None)
+        p_erun.add_argument("--dry-run", action="store_true")
+
+    p_eshow = experiment_sub.add_parser(
+        "show", help="Chi tiết một thí nghiệm: thiết kế, biến thể và alpha đã sinh."
     )
-    p_erun.add_argument("experiment_id", type=int)
-    p_erun.add_argument("--seed", type=int, default=None)
-    p_erun.add_argument("--max-candidates", type=int, default=None)
-    p_erun.add_argument("--dry-run", action="store_true")
+    p_eshow.add_argument("experiment_id", type=int)
+
+    p_eplan = experiment_sub.add_parser(
+        "plan",
+        help="Xem trước kế hoạch sinh của thí nghiệm. Không lưu, không xếp hàng.",
+    )
+    p_eplan.add_argument("experiment_id", type=int)
+    p_eplan.add_argument("--seed", type=int, default=None)
+    p_eplan.add_argument("--max-candidates", type=int, default=None)
+    p_eplan.add_argument("--json", action="store_true")
 
     p_ereport = experiment_sub.add_parser("report", help="Báo cáo kết quả thí nghiệm.")
     p_ereport.add_argument("experiment_id", type=int)
@@ -788,6 +829,41 @@ def cmd_research(settings: Settings, args: argparse.Namespace) -> int:
             print("Chưa có dữ liệu để xếp hạng.", file=sys.stderr)
         return 0
 
+    if args.subcommand == "memory":
+        memory = ResearchMemory(db)
+        stats = memory.statistics(args.source)
+        coverage = memory.coverage(args.source)
+        wanted = [name for name in (args.dimension or MEMORY_DIMENSIONS)
+                  if name in coverage]
+        if args.dimension and not wanted:
+            print(
+                "Chiều không tồn tại. Chọn trong: " + ", ".join(MEMORY_DIMENSIONS),
+                file=sys.stderr,
+            )
+            return 1
+        top = {
+            dimension: dict(coverage[dimension].most_common(max(1, args.top)))
+            for dimension in wanted
+        }
+        if args.json:
+            print(json.dumps({"statistics": stats, "top_values": top},
+                             ensure_ascii=False, indent=2, default=str))
+            return 0
+        print(_render_memory(stats, top))
+        return 0
+
+    if args.subcommand == "next":
+        memory = ResearchMemory(db)
+        advisor = RuleBasedResearchAdvisor(memory)
+        if args.json:
+            print(json.dumps(
+                [item.as_dict() for item in advisor.suggest(args.limit)],
+                ensure_ascii=False, indent=2, default=str,
+            ))
+            return 0
+        print(advisor.render(args.limit))
+        return 0
+
     if args.subcommand == "lineage":
         chain = store.ancestry(args.alpha_id)
         children = store.get_children(args.alpha_id)
@@ -801,6 +877,52 @@ def cmd_research(settings: Settings, args: argparse.Namespace) -> int:
 
     return 1
 
+
+def _render_memory(stats: Dict[str, Any], top: Dict[str, Dict[str, int]]) -> str:
+    """Bản văn bản của trí nhớ nghiên cứu.
+
+    Tách `tested` khỏi `simulated` ngay ở dòng đầu vì đó là chỗ dễ hiểu nhầm
+    nhất: sinh ra một biểu thức không đồng nghĩa với đã tốn một lượt mô phỏng.
+    """
+    counts = stats["counts"]
+    lines = [
+        "Trí nhớ nghiên cứu",
+        "=" * 40,
+        "",
+        f"Đã sinh:      {counts['tested']}",
+        f"Đã mô phỏng:  {counts['simulated']}",
+        f"Đạt:          {counts['passed']}",
+        f"Bị loại:      {counts['rejected']}",
+        f"Đã nộp:       {counts['submitted']}",
+        f"Không hợp lệ: {counts['invalid']}",
+        f"Chưa rõ:      {counts['unknown']}",
+        "",
+    ]
+    if counts["simulated"]:
+        rate = counts["passed"] / counts["simulated"]
+        # Mẫu số là mọi alpha đã mô phỏng, kể cả alpha hỏng. Lấy mẫu số là
+        # alpha đạt sẽ tạo ra thiên lệch sống sót.
+        lines.append(f"Tỷ lệ đạt trên toàn bộ alpha đã mô phỏng: {rate:.1%}")
+    lines += [
+        f"Sharpe trung vị: {stats['median_sharpe']}"
+        f"   Sharpe tốt nhất: {stats['best_sharpe']}",
+        f"Cỡ mẫu có chỉ số: {stats['sample_size']}",
+        "",
+        "Độ phủ theo chiều",
+        "-" * 40,
+    ]
+    for dimension, values in top.items():
+        total = stats["coverage_sizes"].get(dimension, 0)
+        if not values:
+            lines.append(f"{dimension:<16} chưa khảo sát")
+            continue
+        shown = ", ".join(f"{key}={count}" for key, count in values.items())
+        lines.append(f"{dimension:<16} {total} giá trị khác nhau | {shown}")
+    lines += [
+        "",
+        "Đây là mức độ đã nghiên cứu, không phải đánh giá chất lượng.",
+    ]
+    return "\n".join(lines)
 
 
 # ----------------------------------------------------------------------
@@ -842,7 +964,40 @@ def cmd_experiment(settings: Settings, args: argparse.Namespace) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
 
-    if args.subcommand == "run":
+    if args.subcommand == "show":
+        detail = _experiment_detail(db, store, args.experiment_id)
+        if detail is None:
+            print(f"Không có thí nghiệm {args.experiment_id}.", file=sys.stderr)
+            return 1
+        print(json.dumps(detail, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    if args.subcommand == "plan":
+        try:
+            plan = engine.build_plan(
+                args.experiment_id, seed=args.seed, max_candidates=args.max_candidates
+            )
+        except (ExperimentError, PlanError) as exc:
+            print(f"Không dựng được kế hoạch: {exc}", file=sys.stderr)
+            return 1
+        # Xem trước thì không lưu và không xếp hàng. Lệnh này an toàn để chạy
+        # nhiều lần, và đó là lý do nó tồn tại tách khỏi `generate`.
+        if args.json:
+            print(json.dumps(plan.as_dict(), ensure_ascii=False, indent=2, default=str))
+        else:
+            print(plan.describe())
+            print()
+            for expression in plan.seed_expressions:
+                print(f"  {expression}")
+            print()
+            print(
+                f"{len(plan.seed_expressions)} biến thể. Chưa lưu và chưa xếp hàng. "
+                f"Chạy 'alphaforge experiment generate {args.experiment_id}' để xếp hàng.",
+                file=sys.stderr,
+            )
+        return 0
+
+    if args.subcommand in ("run", "generate"):
         try:
             plan = engine.build_plan(
                 args.experiment_id, seed=args.seed, max_candidates=args.max_candidates
@@ -893,6 +1048,56 @@ def cmd_experiment(settings: Settings, args: argparse.Namespace) -> int:
         return 0
 
     return 1
+
+
+def _experiment_detail(
+    db: Database, store: ResearchStore, experiment_id: int
+) -> Optional[Dict[str, Any]]:
+    """Gộp thí nghiệm, thiết kế đã lưu, biến thể và alpha đã sinh.
+
+    Thiết kế nằm trong `settings["_design"]` chứ không ở cột riêng, nên phải
+    lấy ra ở đây. Đọc trực tiếp bảng `alphas` thay vì qua `ExperimentReport`
+    vì lệnh này phải trả lời được cả khi thí nghiệm chưa có kết quả nào.
+    """
+    experiment = store.get_experiment(int(experiment_id))
+    if experiment is None:
+        return None
+
+    settings = dict(experiment.get("settings") or {})
+    design = settings.pop("_design", {})
+    experiment["settings"] = settings
+
+    connection = db.connect()
+    try:
+        variants = []
+        for row in connection.execute(
+            "SELECT id, label, expression, parameters_json, alpha_id, result_status"
+            " FROM experiment_variants WHERE experiment_id = ? ORDER BY id",
+            (int(experiment_id),),
+        ).fetchall():
+            variant = dict(row)
+            variant["parameters"] = load_json_dict(variant.pop("parameters_json"))
+            variants.append(variant)
+        alphas = [dict(row) for row in connection.execute(
+            "SELECT id, local_id, alpha_id, variant_id, status, evaluation_status,"
+            " score, expression FROM alphas WHERE experiment_id = ? ORDER BY id",
+            (int(experiment_id),),
+        ).fetchall()]
+    finally:
+        connection.close()
+
+    counts: Dict[str, int] = {}
+    for row in alphas:
+        key = str(row.get("status") or "UNKNOWN")
+        counts[key] = counts.get(key, 0) + 1
+
+    return {
+        "experiment": experiment,
+        "design": design,
+        "variants": variants,
+        "alphas": alphas,
+        "status_counts": counts,
+    }
 
 
 # ----------------------------------------------------------------------

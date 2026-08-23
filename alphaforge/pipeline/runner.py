@@ -201,6 +201,7 @@ class SimulationRunner:
         self._bump("simulated")
         self.limiter.on_success()
         self.db.update_alpha(record.id, **fields)
+        self._link_lineage(record, result.alpha_id)
 
         if self.progress_callback:
             self.progress_callback(
@@ -211,6 +212,21 @@ class SimulationRunner:
                     "metrics": result.metrics,
                 }
             )
+
+    def _link_lineage(self, record: AlphaRecord, alpha_id: str) -> None:
+        """Nối mã alpha của nền tảng vào phả hệ cục bộ.
+
+        Bọc trong try vì phả hệ là dữ liệu bổ trợ: hỏng phả hệ không được làm
+        mất kết quả mô phỏng vừa tốn hạn mức để có.
+        """
+        if not record.local_id or not alpha_id:
+            return
+        try:
+            from ..research.store import ResearchStore
+
+            ResearchStore(self.db).link_platform_alpha(record.local_id, alpha_id)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Không nối được phả hệ cho %s: %s", alpha_id, exc)
 
     def _requeue(self, record: AlphaRecord, message: str) -> None:
         """Trả bản ghi về hàng đợi, chuyển sang FAILED khi hết số lần thử."""

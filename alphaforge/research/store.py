@@ -17,7 +17,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..storage.db import Database
+from ..storage.db import Database, load_json_dict as _load_json
 from .models import (
     AlphaLineage,
     Experiment,
@@ -256,6 +256,40 @@ class ResearchStore:
         finally:
             connection.close()
 
+    def link_platform_alpha(
+        self, local_id: str, alpha_id: str, *, mutation_type: str = ""
+    ) -> bool:
+        """Nối mã alpha của nền tảng vào chuỗi phả hệ đã có.
+
+        Alpha ID chỉ xuất hiện sau khi mô phỏng, còn phả hệ được ghi ngay lúc
+        sinh dưới định danh cục bộ. Hàm này thêm một mắt xích mới trỏ về mắt
+        xích cục bộ, nên chuỗi đầy đủ trở thành:
+
+            Research → Hypothesis → Experiment → Variant → LOCAL-128 → A12345
+
+        Giữ cả hai mắt xích thay vì đổi tên mắt xích cũ: alpha cục bộ vẫn tồn
+        tại kể cả khi mô phỏng thất bại, và đó cũng là thông tin nghiên cứu.
+        """
+        local = self.get_lineage(str(local_id))
+        if local is None or not alpha_id:
+            return False
+        self.save_lineage(
+            AlphaLineage(
+                alpha_id=str(alpha_id),
+                parent_alpha_id=str(local_id),
+                research_id=local.get("research_id"),
+                hypothesis_id=local.get("hypothesis_id"),
+                experiment_id=local.get("experiment_id"),
+                variant_id=local.get("variant_id"),
+                generation_strategy=str(local.get("generation_strategy") or ""),
+                generation_seed=local.get("generation_seed"),
+                mutation_type=mutation_type or str(local.get("mutation_type") or ""),
+                source=str(local.get("source") or ""),
+                source_alpha_id=str(local_id),
+            )
+        )
+        return True
+
     def get_lineage(self, alpha_id: str) -> Optional[Dict[str, Any]]:
         connection = self.connect()
         try:
@@ -303,13 +337,3 @@ class ResearchStore:
         return chain
 
 
-def _load_json(raw: Any) -> Dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if not raw:
-        return {}
-    try:
-        value = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
