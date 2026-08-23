@@ -72,7 +72,14 @@ Research Memory ──────► Alpha Generation ──► Alpha Validatio
                                                    ▼
                                           Historical Memory
                                                    │
-                                                   └──► Research Gap mới
+                                                   ▼
+                                          Research Gap mới
+                                                   │
+                                                   ▼
+                                          Research Advisor
+                                        (nên nghiên cứu gì tiếp)
+                                                   │
+                                                   └──► Experiment mới
 ```
 
 Vòng khép kín. Alpha đã nộp quay lại làm dữ liệu cho lượt nghiên cứu sau.
@@ -81,7 +88,7 @@ Vòng khép kín. Alpha đã nộp quay lại làm dữ liệu cho lượt nghi�
 alpha của nền tảng. Lệnh `alpha mark-submitted` chỉ ghi chép việc người dùng
 nói rằng họ đã tự nộp.
 
-## Bảy thành phần
+## Tám thành phần
 
 ### 1. Research Memory — `research/memory.py`
 
@@ -106,8 +113,16 @@ chưa hiệu quả. Hai kết luận nghiên cứu hoàn toàn khác nhau.
 
 ### 2. Research Gap — `research/gap.py`
 
-Tìm chỗ thiếu bằng chứng trên tám chiều: trường dữ liệu, toán tử, cửa sổ nhìn
-lại, họ cấu trúc, thiết lập, khu vực, universe, trung tính hóa.
+Tìm chỗ thiếu bằng chứng trên mười chiều: trường dữ liệu, toán tử, cửa sổ nhìn
+lại, họ cấu trúc, mẫu biểu thức, nhóm phân loại, thiết lập, khu vực, universe,
+trung tính hóa.
+
+Hai loại thiếu hụt được phân biệt rõ, vì chúng đòi hỏi hành động khác nhau:
+
+| Loại | Dấu hiệu | Vì sao nguy hiểm |
+| --- | --- | --- |
+| thiếu theo lượng | một giá trị mới có vài quan sát | dễ thấy, dễ xử lý |
+| thiếu theo phủ | nhiều quan sát nhưng dồn hết vào một giá trị | nhìn số lượng sẽ tưởng đã khảo sát kỹ |
 
 Phân biệt hai loại thiếu hụt:
 
@@ -210,6 +225,38 @@ Bước ba đáng giá nhất: nó loại alpha trùng ý tưởng với thứ �
 tốn một lượt gọi tương quan. Hai biểu thức cùng họ cấu trúc gần như chắc chắn
 tương quan cao, và điều đó biết được tại chỗ.
 
+Mức so sánh của bước ba phụ thuộc vào nguồn gốc của alpha, và đây là chỗ dễ
+làm sai nhất:
+
+| Nguồn gốc | So ở mức | Vì sao |
+| --- | --- | --- |
+| sinh tự do | họ cấu trúc | trùng ý tưởng ngẫu nhiên thì không đáng tốn hạn mức |
+| thí nghiệm | tham số | khảo sát nhiều cửa sổ trong một họ **chính là** mục đích của thí nghiệm |
+
+Chặn thí nghiệm ở mức họ sẽ giết sạch mọi biến thể, và triệu chứng duy nhất là
+mọi báo cáo đều hiện cỡ mẫu bằng không.
+
+### 8. Research Advisor — `research/advisor.py`
+
+Trả lời câu hỏi khép lại vòng nghiên cứu: **nên nghiên cứu gì tiếp**.
+
+Không tính thống kê mới nào. Nó gộp độ phủ từ trí nhớ, thiếu hụt từ
+`ResearchGap` và điểm ưu tiên từ `ResearchPriority`, rồi dựng sẵn một bản thiết
+kế thí nghiệm cho từng hướng.
+
+Ranh giới cố ý hẹp: cố vấn **chỉ đề xuất**. Nó không sinh alpha, không chạy mô
+phỏng, không sửa trí nhớ và không nộp gì cả. Người đọc quyết định có chạy hay
+không.
+
+Mọi lý do đều được viết dưới dạng phát biểu về **độ phủ**, không phải về chất
+lượng, và luôn kết thúc bằng một câu nhắc rằng đây là mức độ đã nghiên cứu chứ
+không phải dự báo hiệu năng. Một vùng ít được khảo sát không có nghĩa là nó tốt
+hơn.
+
+Giao diện `ResearchAdvisor` được tách riêng để sau này cắm bản dùng mô hình ngôn
+ngữ vào cùng chỗ. Hiện chỉ có `RuleBasedResearchAdvisor`, và nó cố ý không phụ
+thuộc vào bất kỳ dịch vụ ngoài nào, nên kết quả tất định và giải thích được.
+
 ## Hai thang trạng thái
 
 Tách làm hai vì chúng trả lời hai câu hỏi khác nhau.
@@ -264,7 +311,37 @@ tham chiếu cấu hình hiện tại), chiến lược sinh, **hạt giống**,
 thí nghiệm, mã biến thể, alpha cha, alpha nguồn.
 
 Khóa khử trùng lặp gồm cả biểu thức lẫn thiết lập, nên cùng một biểu thức chạy ở
-hai khu vực là hai thí nghiệm riêng biệt.
+hai khu vực là hai thí nghiệm riêng biệt. Khóa này chỉ chứa thiết lập mô phỏng
+thật; siêu dữ liệu thiết kế của thí nghiệm bị bóc ra trước, nếu không thì cùng
+một biểu thức ở hai thí nghiệm lại ra hai khóa khác nhau và bản trùng lọt qua.
+
+### Hai loại định danh
+
+Alpha có **hai** mã, xuất hiện ở hai thời điểm khác nhau:
+
+| Mã | Có từ khi | Ví dụ |
+| --- | --- | --- |
+| `local_id` | ngay lúc sinh, trước mọi lệnh gọi mạng | `LOCAL-00000042` |
+| `alpha_id` | sau khi mô phỏng xong, do nền tảng cấp | mã của BRAIN |
+
+Phả hệ được ghi theo `local_id` ngay tại bước sinh, rồi bổ sung `alpha_id` sau
+khi mô phỏng. Chờ tới sau mô phỏng mới ghi là quá muộn: lô có thể bị ngắt giữa
+chừng và mất hẳn nguồn gốc. Mọi chỗ tra cứu phả hệ đều nhận cả hai mã.
+
+### Bốn mức vân tay
+
+`history/fingerprint.py` băm mỗi biểu thức ở bốn mức trừu tượng, mỗi mức trả lời
+một câu hỏi khác nhau:
+
+| Mức | Hỏi | `rank(ts_mean(close, 20))` so với |
+| --- | --- | --- |
+| `exact` | đúng biểu thức này chưa? | chỉ chính nó |
+| `parameter` | cùng tham số chưa? | `rank(ts_mean(close, 20))` |
+| `family` | cùng họ cấu trúc chưa? | `rank(ts_mean(close, 60))` |
+| `template` | cùng khuôn chưa? | `rank(ts_mean(volume, 60))` |
+
+Toán tử được nhận diện theo cú pháp — tên đứng ngay trước dấu mở ngoặc — nên
+không cần danh sách toán tử cố định và toán tử mới của nền tảng vẫn nhận ra.
 
 ## Kết luận nghiên cứu
 

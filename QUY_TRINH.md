@@ -34,9 +34,13 @@ Tiến trình bị ngắt giữa chừng để lại bản ghi kẹt ở RUNNING
 vùng hoàn toàn mới.
 
 ```text
+research memory        xem hệ thống đã nghiên cứu những gì, tới đâu
+      ▼
 research gaps          xem còn thiếu bằng chứng ở đâu
       ▼
 research priorities    xem nên khảo sát chỗ nào trước, kèm lý do
+      ▼
+research next          đọc đề xuất hướng tiếp theo kèm thí nghiệm gợi ý
       ▼
 research project       lập dự án
       ▼
@@ -44,13 +48,17 @@ research hypothesis    phát biểu giả thuyết có cơ sở kinh tế
       ▼
 experiment design      thiết kế thí nghiệm đổi ĐÚNG MỘT biến
       ▼
-experiment run         đưa biến thể vào hàng đợi
+experiment plan        xem trước kế hoạch sinh, chưa ghi gì vào kho
+      ▼
+experiment generate    đưa biến thể vào hàng đợi
       ▼
 run                    mô phỏng
       ▼
 evaluate               chấm điểm, độ bền, lọc trùng cấu trúc (không gọi BRAIN)
       ▼
 correlate              tương quan, chỉ cho nhóm đã qua các bước trên
+      ▼
+experiment show        xem thiết kế, biến thể và alpha đã sinh
       ▼
 experiment report      đọc kết luận và bước tiếp theo
       ▼
@@ -60,7 +68,9 @@ alpha promote          đưa lên bậc ứng viên
       ▼
 alpha mark-submitted   ghi nhận, để trí nhớ nghiên cứu cập nhật
       ▼
-history scan           vòng khép kín
+history scan           nạp lại lịch sử
+      ▼
+research next          vòng khép kín: hệ thống đề xuất hướng nghiên cứu tiếp
 ```
 
 ### Vì sao mỗi thí nghiệm chỉ đổi một biến
@@ -81,6 +91,17 @@ bền, và lọc trùng cấu trúc cục bộ. Chỉ alpha vượt cả ba mớ
 
 Bước lọc trùng cấu trúc đáng giá nhất: hai biểu thức cùng họ cấu trúc gần như
 chắc chắn tương quan cao, và điều đó biết được tại chỗ mà không tốn lượt gọi nào.
+
+Nhưng mức so sánh phải khác nhau tùy nguồn gốc của alpha, và đây là chỗ dễ làm
+sai nhất trong cả quy trình:
+
+| Alpha đến từ | So ở mức | Vì sao |
+| --- | --- | --- |
+| sinh tự do | họ cấu trúc | trùng ý tưởng ngẫu nhiên không đáng tốn hạn mức |
+| thí nghiệm | tham số | quét nhiều cửa sổ trong một họ **chính là** mục đích của thí nghiệm |
+
+Nếu chặn thí nghiệm ở mức họ thì mọi biến thể đều bị loại, và triệu chứng duy
+nhất là báo cáo nào cũng hiện cỡ mẫu bằng không.
 
 ## 3. Thứ tự chạy khuyến nghị
 
@@ -140,7 +161,11 @@ Mỗi alpha lưu kèm toàn bộ thiết lập mô phỏng đã dùng trong cộ
 
 Mỗi `Experiment` cũng lưu bản sao thiết lập của riêng nó. Khóa khử trùng lặp gồm cả biểu thức lẫn thiết lập, nên cùng một biểu thức chạy ở hai khu vực khác nhau là hai thí nghiệm riêng biệt.
 
-Bảng `alpha_lineage` ghi quan hệ cha con, chiến lược sinh, kiểu biến đổi và nguồn gốc. Alpha sinh ra từ một alpha lịch sử cũng được ghi phả hệ với `source = "historical"`.
+Bảng `alpha_lineage` ghi quan hệ cha con, chiến lược sinh, hạt giống, kiểu biến đổi và nguồn gốc. Alpha sinh ra từ một alpha lịch sử cũng được ghi phả hệ với `source = "historical"`.
+
+Phả hệ được ghi **ngay tại bước sinh**, theo mã cục bộ `LOCAL-xxxxxxxx` mà mỗi alpha nhận được trước bất kỳ lệnh gọi mạng nào. Mã của nền tảng chỉ tồn tại sau khi mô phỏng xong và được nối thêm vào sau. Chờ tới lúc đó mới ghi phả hệ là quá muộn: lô có thể bị ngắt giữa chừng và mất hẳn nguồn gốc. Mọi chỗ tra cứu phả hệ, cả dòng lệnh lẫn bảng theo dõi, đều nhận cả hai mã.
+
+Khóa khử trùng lặp chỉ gồm thiết lập mô phỏng thật. Siêu dữ liệu thiết kế của thí nghiệm bị bóc ra trước khi tính khóa; để nó lọt vào thì cùng một biểu thức ở hai thí nghiệm sẽ ra hai khóa khác nhau và bản trùng lọt qua ràng buộc duy nhất của kho.
 
 ## 10. Giới hạn tần suất
 

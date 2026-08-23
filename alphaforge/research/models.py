@@ -7,12 +7,11 @@ ngữ cảnh nghiên cứu; simulation là một tác vụ nằm bên dưới re
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+#: Một định nghĩa duy nhất cho cả gói. Hai bản sao của cùng một hàm thời gian
+#: là chỗ dễ lệch định dạng dấu thời gian giữa các bảng.
+from ..storage.db import utc_now
 
 
 @dataclass(frozen=True)

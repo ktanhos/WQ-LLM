@@ -20,7 +20,9 @@ from typing import Any, Dict, List, Optional
 from ..generator.engine import GenerationRequest, GeneratorEngine
 from ..history.fingerprint import fingerprint
 from ..research.memory import GenerationContext
+from ..research.models import AlphaLineage
 from ..research.plan import STRATEGY_DIRECT, GenerationPlan
+from ..research.store import ResearchStore
 from ..storage.db import Database, Status
 from .validation import AlphaValidator, ValidationConstraints, validator_from_database
 
@@ -40,6 +42,11 @@ class GenerationOutcome:
     duplicates: int = 0
     rejected_by_memory: Dict[str, int] = field(default_factory=dict)
     invalid_reasons: List[str] = field(default_factory=list)
+    #: Trùng lặp phân theo ba mức, xem `_classify_duplicates`.
+    diversity: Dict[str, int] = field(default_factory=dict)
+    #: Định danh cục bộ của các alpha vừa đưa vào hàng đợi.
+    local_ids: List[str] = field(default_factory=list)
+    lineage_written: int = 0
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -52,6 +59,8 @@ class GenerationOutcome:
             "duplicates": self.duplicates,
             "rejected_by_memory": self.rejected_by_memory,
             "invalid_reasons": self.invalid_reasons[:20],
+            "diversity": self.diversity,
+            "lineage_written": self.lineage_written,
         }
 
 
@@ -157,6 +166,10 @@ def generate_and_queue(
     outcome.invalid = len(refused)
     outcome.invalid_reasons = [result.reason for result in refused if result.reason]
 
+    outcome.diversity = _classify_duplicates(
+        [result.expression for result in accepted], db
+    )
+
     if dry_run:
         return outcome
 
@@ -184,6 +197,10 @@ def generate_and_queue(
         _stamp_plan_metadata(db, outcome.run_id, plan)
         if variant_ids:
             _link_variants(db, outcome.run_id, variant_ids)
+        # Gán định danh cục bộ rồi ghi phả hệ ngay lúc sinh. Chờ tới sau mô
+        # phỏng là quá muộn: lô có thể bị ngắt giữa chừng và mất hẳn nguồn gốc.
+        outcome.local_ids = _assign_local_ids(db, outcome.run_id)
+        outcome.lineage_written = _write_lineage(db, outcome.run_id, plan)
 
     if store_invalid and refused:
         # Biểu thức hỏng vẫn được ghi lại: biết nó hỏng ở đâu là thông tin
@@ -244,14 +261,18 @@ def _store_invalid(
     try:
         connection.execute("BEGIN IMMEDIATE")
         for result in refused:
+            # Chỉ đụng tới bản ghi của chính lượt sinh này. Không có điều kiện
+            # `run_id`, một biểu thức bị lô sau từ chối vì trùng sẽ kéo luôn
+            # bản ghi đang chờ của lô trước sang INVALID, và alpha đó biến mất
+            # khỏi hàng đợi mà không ai biết.
             connection.execute(
                 """
                 UPDATE alphas
                    SET status = ?, validation_error = ?, plan_id = ?, source_type = ?
-                 WHERE expression = ? AND status = ?
+                 WHERE expression = ? AND status = ? AND run_id IS ?
                 """,
                 (Status.INVALID, result.reason, plan.id, plan.strategy,
-                 result.expression, Status.PENDING),
+                 result.expression, Status.PENDING, run_id),
             )
         connection.execute("COMMIT")
     except Exception:
@@ -281,3 +302,131 @@ def _link_variants(db: Database, run_id: int, variant_ids: Dict[str, int]) -> No
         raise
     finally:
         connection.close()
+
+
+#: Ba mức trùng lặp mà bộ sinh phân biệt.
+DUPLICATE_EXACT = "exact"
+DUPLICATE_STRUCTURAL = "structural"
+DUPLICATE_RESEARCH = "research"
+
+
+def _classify_duplicates(expressions: List[str], db: Database) -> Dict[str, int]:
+    """Phân loại trùng lặp của lô vừa sinh theo ba mức.
+
+    Ba mức trả lời ba câu hỏi khác nhau:
+
+        exact       đúng biểu thức này đã có chưa
+        structural  cấu trúc này đã có chưa, dù khác tham số
+        research    khuôn này đã có chưa, dù khác cả trường dữ liệu
+
+    Ghi nhận cả ba thay vì chỉ loại mức exact: hai biểu thức cùng họ cấu trúc
+    không phải hai ý tưởng độc lập, và biết điều đó quan trọng hơn là im lặng
+    coi chúng như nhau.
+    """
+    known_exact: set = set()
+    known_family: set = set()
+    known_template: set = set()
+
+    connection = db.connect()
+    try:
+        for table in ("alphas", "historical_alphas"):
+            for row in connection.execute(
+                f"SELECT expression FROM {table} "
+                "WHERE expression IS NOT NULL AND expression != ''"
+            ).fetchall():
+                try:
+                    meta = fingerprint(row["expression"])
+                except Exception:
+                    continue
+                known_exact.add(meta["exact"])
+                known_family.add(meta["family"])
+                known_template.add(meta["template"])
+    finally:
+        connection.close()
+
+    counts = {DUPLICATE_EXACT: 0, DUPLICATE_STRUCTURAL: 0, DUPLICATE_RESEARCH: 0,
+              "novel": 0}
+    for expression in expressions:
+        meta = fingerprint(expression)
+        if meta["exact"] in known_exact:
+            counts[DUPLICATE_EXACT] += 1
+        elif meta["family"] in known_family:
+            counts[DUPLICATE_STRUCTURAL] += 1
+        elif meta["template"] in known_template:
+            counts[DUPLICATE_RESEARCH] += 1
+        else:
+            counts["novel"] += 1
+        # Lô hiện tại cũng tính vào phần đã biết, để trùng nội bộ lộ ra.
+        known_exact.add(meta["exact"])
+        known_family.add(meta["family"])
+        known_template.add(meta["template"])
+    return counts
+
+
+def _assign_local_ids(db: Database, run_id: int) -> List[str]:
+    """Gán định danh cục bộ cho alpha vừa thêm.
+
+    Alpha ID của nền tảng chỉ có sau khi mô phỏng, nên không dùng làm khóa phả
+    hệ được. Định danh cục bộ có ngay, và tồn tại kể cả khi alpha không bao giờ
+    được mô phỏng.
+    """
+    connection = db.connect()
+    try:
+        rows = connection.execute(
+            "SELECT id FROM alphas WHERE run_id = ? AND local_id IS NULL ORDER BY id",
+            (int(run_id),),
+        ).fetchall()
+        local_ids = []
+        connection.execute("BEGIN IMMEDIATE")
+        for row in rows:
+            local_id = f"LOCAL-{int(row['id']):08d}"
+            connection.execute(
+                "UPDATE alphas SET local_id = ? WHERE id = ?", (local_id, int(row["id"]))
+            )
+            local_ids.append(local_id)
+        connection.execute("COMMIT")
+        return local_ids
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.close()
+
+
+def _write_lineage(db: Database, run_id: int, plan: GenerationPlan) -> int:
+    """Ghi phả hệ cho từng alpha vừa sinh.
+
+    Trước đây bảng `alpha_lineage` có sẵn nhưng đường sinh alpha không bao giờ
+    ghi vào, nên phả hệ chỉ tồn tại khi ai đó gọi tay. Hàm này đóng chỗ hở đó.
+    """
+    store = ResearchStore(db)
+    connection = db.connect()
+    try:
+        rows = connection.execute(
+            "SELECT local_id, parent_alpha_id, variant_id, generation_strategy,"
+            " generation_seed, source_type FROM alphas WHERE run_id = ?",
+            (int(run_id),),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    written = 0
+    for row in rows:
+        if not row["local_id"]:
+            continue
+        store.save_lineage(
+            AlphaLineage(
+                alpha_id=str(row["local_id"]),
+                parent_alpha_id=row["parent_alpha_id"],
+                research_id=plan.research_id,
+                hypothesis_id=plan.hypothesis_id,
+                experiment_id=plan.experiment_id,
+                variant_id=row["variant_id"],
+                generation_strategy=str(row["generation_strategy"] or ""),
+                generation_seed=row["generation_seed"],
+                source=str(row["source_type"] or plan.strategy),
+                source_alpha_id=row["parent_alpha_id"],
+            )
+        )
+        written += 1
+    return written

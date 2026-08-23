@@ -20,12 +20,12 @@ nghiên cứu mới chuyển tiếp được.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
-from ..history.fingerprint import compare, fingerprint
+from ..history.fingerprint import fingerprint
 from ..storage.db import Database, EvaluationStatus, Status, utc_now
-from .robustness import RobustnessChecker, RobustnessReport
+from .robustness import RobustnessChecker
 from .scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -268,17 +268,30 @@ class EvaluationPipeline:
     def _structural_match(self, record, reference: Sequence[str]) -> Optional[str]:
         """Tìm alpha đã có trùng ý tưởng với bản ghi đang xét.
 
-        Chỉ so ở mức họ cấu trúc trở lên. Cùng khuôn nhưng khác trường dữ liệu
-        vẫn được coi là ý tưởng khác và đi tiếp.
+        Mức so sánh phụ thuộc vào việc alpha có thuộc một thí nghiệm hay không,
+        và đây là điểm mấu chốt:
+
+            sinh tự do   so ở mức họ cấu trúc. Một biểu thức tình cờ trùng ý
+                         tưởng với alpha đã có thì không đáng tốn lượt gọi
+                         tương quan.
+
+            thí nghiệm   so ở mức tham số. Khảo sát nhiều cửa sổ trong cùng một
+                         họ chính là mục đích của thí nghiệm có kiểm soát, nên
+                         chặn ở mức họ sẽ giết sạch mọi biến thể và làm thí
+                         nghiệm vô nghĩa.
+
+        Nói cách khác: trùng lặp ngẫu nhiên bị chặn, còn khảo sát có chủ đích
+        thì không.
         """
         if not reference:
             return None
         target = fingerprint(record.expression)
+        level = "parameter" if record.experiment_id else "family"
         for expression in reference:
             if expression == record.expression:
                 continue
             other = fingerprint(expression)
-            if other["family"] == target["family"]:
+            if other[level] == target[level]:
                 return expression[:80]
         return None
 

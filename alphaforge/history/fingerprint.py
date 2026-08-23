@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import Counter
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
 #: Định danh, số thực, hoặc một ký tự dấu.
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*|\d+(?:\.\d+)?|[^\sA-Za-z0-9_]")
@@ -185,6 +185,27 @@ def _sha(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+#: Bốn mức trừu tượng, từ hẹp tới rộng.
+LEVEL_EXACT = "exact"
+LEVEL_PARAMETER = "parameter"
+LEVEL_FAMILY = "family"
+LEVEL_TEMPLATE = "template"
+LEVELS = (LEVEL_EXACT, LEVEL_PARAMETER, LEVEL_FAMILY, LEVEL_TEMPLATE)
+
+
+def _parameter_signature(analysis: "_Analysis") -> str:
+    """Chuỗi đại diện cho bộ tham số, độc lập với cấu trúc.
+
+    Tách riêng khỏi ba mức kia vì nó trả lời câu hỏi khác: hai biểu thức cùng
+    họ cấu trúc thì khác nhau ở chỗ nào. Không có nó, câu hỏi "đã thử cấu trúc
+    này với cửa sổ khác chưa" phải quét lại toàn bộ biểu thức.
+    """
+    windows = ",".join(str(value) for value in sorted(set(analysis.windows)))
+    numbers = ",".join(sorted(set(analysis.numbers)))
+    groups = ",".join(sorted(set(analysis.groups)))
+    return f"w[{windows}]|n[{numbers}]|g[{groups}]"
+
+
 def fingerprint(expression: str) -> Dict[str, Any]:
     """Phân tích cấu trúc một biểu thức, không thực thi và không gọi mạng.
 
@@ -198,6 +219,7 @@ def fingerprint(expression: str) -> Dict[str, Any]:
     unique_fields = sorted(set(analysis.fields))
     signatures = _signatures(text, unique_fields)
     operator_counts = Counter(analysis.operators)
+    parameter_signature = _parameter_signature(analysis)
 
     return {
         # Ba mức vân tay.
@@ -221,6 +243,15 @@ def fingerprint(expression: str) -> Dict[str, Any]:
         "windows": sorted(set(analysis.windows)),
         "numeric_literals": list(analysis.numbers),
         "keyword_args": sorted(set(analysis.keyword_args)),
+        # Mức tham số: cùng họ cấu trúc nhưng khác bộ tham số.
+        "parameter": _sha(f"{signatures['family']}||{parameter_signature}"),
+        "parameter_signature": parameter_signature,
+        "parameters": {
+            "windows": sorted(set(analysis.windows)),
+            "numbers": sorted(set(analysis.numbers)),
+            "groups": sorted(set(analysis.groups)),
+            "keyword_args": sorted(set(analysis.keyword_args)),
+        },
         # Đặc trưng ngữ nghĩa.
         "neutralization": sorted(
             set(analysis.operators) & NEUTRALIZE_OPERATORS
@@ -335,3 +366,27 @@ def find_duplicates(
         )
     matches.sort(key=lambda item: (order.get(item["relation"], 9), item["expression"]))
     return matches
+
+
+def levels(expression: str) -> Dict[str, str]:
+    """Bốn khóa của một biểu thức, mỗi khóa ứng với một mức trừu tượng.
+
+    Dùng khi cần tra nhiều mức cùng lúc mà không muốn tính lại vân tay.
+    """
+    meta = fingerprint(expression)
+    return {level: meta[level] for level in LEVELS}
+
+
+def same_structure_different_parameter(left: str, right: str) -> bool:
+    """Cùng họ cấu trúc nhưng khác bộ tham số.
+
+    Đây chính là câu hỏi "đã thử cấu trúc này với cửa sổ khác chưa".
+    """
+    a, b = fingerprint(left), fingerprint(right)
+    return a["family"] == b["family"] and a["parameter"] != b["parameter"]
+
+
+def same_template_different_field(left: str, right: str) -> bool:
+    """Cùng khuôn cấu trúc nhưng khác trường dữ liệu."""
+    a, b = fingerprint(left), fingerprint(right)
+    return a["template"] == b["template"] and a["family"] != b["family"]

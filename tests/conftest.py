@@ -104,6 +104,56 @@ def page(results: List[Dict[str, Any]], next_url: Optional[str] = None) -> Dict[
     return {"count": len(results), "results": results, "next": next_url}
 
 
+def insert_historical(
+    db: Database,
+    expression: str,
+    *,
+    alpha_id: str = "",
+    status: str = "ACTIVE",
+    sharpe: Optional[float] = 1.5,
+    fitness: Optional[float] = 1.1,
+    turnover: Optional[float] = 0.3,
+    submitted: str = "2026-06-01",
+    region: str = "USA",
+    universe: str = "TOP3000",
+    delay: int = 1,
+    neutralization: str = "SUBINDUSTRY",
+) -> str:
+    """Ghi một alpha lịch sử giả lập kèm vân tay đã tính sẵn.
+
+    Trí nhớ nghiên cứu đọc các cột vân tay chứ không phân tích lại biểu thức,
+    nên bản ghi thiếu vân tay sẽ im lặng không đóng góp vào độ phủ. Hàm này
+    tồn tại để mọi tệp kiểm thử gieo dữ liệu theo đúng một cách.
+    """
+    from alphaforge.history.fingerprint import fingerprint
+
+    meta = fingerprint(expression)
+    alpha_id = alpha_id or f"HIST-{abs(hash(expression)) % 10 ** 8:08d}"
+    connection = db.connect()
+    try:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO historical_alphas (
+                alpha_id, submitted, status, region, universe, delay,
+                neutralization, expression, sharpe, fitness, turnover, source,
+                fingerprint, family, template, operators_json, fields_json,
+                windows_json, imported_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brain_submitted',
+                      ?, ?, ?, ?, ?, ?, '2026-06-01T00:00:00Z')
+            """,
+            (
+                alpha_id, submitted, status, region, universe, delay,
+                neutralization, expression, sharpe, fitness, turnover,
+                meta["family"], meta["family"], meta["template"],
+                json.dumps(meta["operators"]), json.dumps(meta["fields"]),
+                json.dumps(meta["windows"]),
+            ),
+        )
+    finally:
+        connection.close()
+    return alpha_id
+
+
 @pytest.fixture()
 def db(tmp_path) -> Database:
     return Database(tmp_path / "test.sqlite3")

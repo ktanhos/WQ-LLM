@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from ..generator.templates import TEMPLATES_BY_NAME
 from ..storage.db import Database, utc_now
@@ -44,6 +44,7 @@ class GenerationPlan:
     data_fields: Sequence[str] = field(default_factory=tuple)
     operators: Sequence[str] = field(default_factory=tuple)
     lookbacks: Sequence[int] = field(default_factory=tuple)
+    groups: Sequence[str] = field(default_factory=tuple)
     templates: Sequence[str] = field(default_factory=tuple)
     max_candidates: int = 100
     seed: Optional[int] = None
@@ -127,11 +128,40 @@ class GenerationPlan:
             parts.append(f"mẫu={len(self.templates)}")
         if self.lookbacks:
             parts.append(f"cửa sổ={list(self.lookbacks)}")
+        if self.groups:
+            parts.append(f"nhóm={list(self.groups)}")
         if self.experiment_id:
             parts.append(f"thí nghiệm={self.experiment_id}")
         if self.seed is not None:
             parts.append(f"hạt giống={self.seed}")
         return ", ".join(parts)
+
+    def as_dict(self) -> Dict[str, Any]:
+        """Bản đầy đủ dạng từ điển, dùng cho lệnh xem trước và cho bảng theo dõi.
+
+        Có `as_dict` riêng bên cạnh `describe` vì hai chỗ dùng khác nhau:
+        `describe` là một dòng cho người đọc, còn cái này giữ nguyên mọi giá
+        trị để so sánh hai kế hoạch hoặc dựng lại kế hoạch cũ.
+        """
+        return {
+            "id": self.id,
+            "strategy": self.strategy,
+            "data_fields": list(self.data_fields),
+            "operators": list(self.operators),
+            "lookbacks": [int(value) for value in self.lookbacks],
+            "groups": list(self.groups),
+            "templates": list(self.templates),
+            "max_candidates": int(self.max_candidates),
+            "seed": self.seed,
+            "settings": dict(self.settings),
+            "constraints": dict(self.constraints),
+            "research_id": self.research_id,
+            "hypothesis_id": self.hypothesis_id,
+            "experiment_id": self.experiment_id,
+            "seed_expressions": list(self.seed_expressions),
+            "variant_ids": dict(self.variant_ids),
+            "notes": self.notes,
+        }
 
     # ------------------------------------------------------------------
     def save(self, db: Database) -> int:
@@ -148,15 +178,16 @@ class GenerationPlan:
                 INSERT INTO generation_plans (
                     research_id, hypothesis_id, experiment_id, strategy,
                     data_fields_json, operators_json, lookbacks_json,
-                    templates_json, constraints_json, settings_json,
+                    groups_json, templates_json, constraints_json, settings_json,
                     max_candidates, seed, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self.research_id, self.hypothesis_id, self.experiment_id,
                     self.strategy,
                     _dump(list(self.data_fields)), _dump(list(self.operators)),
                     _dump([int(value) for value in self.lookbacks]),
+                    _dump(list(self.groups)),
                     _dump(list(self.templates)), _dump(self.constraints),
                     _dump(self.settings), int(self.max_candidates), self.seed,
                     self.notes, utc_now(),
@@ -187,6 +218,7 @@ class GenerationPlan:
             data_fields=_load(row["data_fields_json"]),
             operators=_load(row["operators_json"]),
             lookbacks=[int(value) for value in _load(row["lookbacks_json"])],
+            groups=_load(row["groups_json"]),
             templates=_load(row["templates_json"]),
             constraints=_load(row["constraints_json"]) or {},
             settings=_load(row["settings_json"]) or {},

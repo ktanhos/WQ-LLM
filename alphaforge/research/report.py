@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from ..history.analyzer import describe
-from ..storage.db import Database, EvaluationStatus, Status
+from ..storage.db import Database, Status
 from .memory import ResearchMemory
 from .store import ResearchStore
 
@@ -28,6 +28,35 @@ CONCLUSION_INSUFFICIENT = "evidence_insufficient"
 CONCLUSION_SUPPORTS = "supports_hypothesis"
 CONCLUSION_CONTRADICTS = "contradicts_hypothesis"
 CONCLUSION_INCONCLUSIVE = "inconclusive"
+
+#: Bốn mức bằng chứng. Tách khỏi kết luận vì hai thứ độc lập: một kết luận
+#: "ủng hộ giả thuyết" trên tám alpha và trên tám trăm alpha có sức nặng rất
+#: khác nhau, dù nhãn kết luận giống hệt.
+EVIDENCE_INSUFFICIENT = "insufficient"
+EVIDENCE_WEAK = "weak"
+EVIDENCE_MODERATE = "moderate"
+EVIDENCE_STRONG = "strong"
+
+#: Cỡ mẫu tối thiểu cho từng mức bằng chứng.
+EVIDENCE_THRESHOLDS = (
+    (EVIDENCE_STRONG, 100),
+    (EVIDENCE_MODERATE, 30),
+    (EVIDENCE_WEAK, 8),
+)
+
+
+def evidence_level(sample_size: int, min_sample: int = 8) -> str:
+    """Xếp mức bằng chứng theo cỡ mẫu.
+
+    Dưới `min_sample` thì không có mức nào cả: chưa đủ để nói gì.
+    """
+    if sample_size < min_sample:
+        return EVIDENCE_INSUFFICIENT
+    for level, threshold in EVIDENCE_THRESHOLDS:
+        if sample_size >= threshold:
+            return level
+    return EVIDENCE_INSUFFICIENT
+
 
 #: Số alpha có chỉ số tối thiểu để rút bất kỳ kết luận nào.
 DEFAULT_MIN_SAMPLE = 8
@@ -117,6 +146,8 @@ class ExperimentReport:
             "counts": {
                 "alpha_count": outcome["total"],
                 "simulated": outcome["simulated"],
+                "generated": outcome["total"],
+                "validated": outcome["total"] - outcome["invalid"],
                 "invalid": outcome["invalid"],
                 "passed": outcome["passed"],
                 "rejected": outcome["rejected"],
@@ -125,6 +156,7 @@ class ExperimentReport:
                 "candidates": outcome["candidates"],
             },
             "pass_rate": outcome["pass_rate"],
+            "structural_diversity": self._diversity(alphas),
             "metrics": {
                 "sharpe": describe(sharpes),
                 "fitness": describe(
@@ -214,6 +246,37 @@ class ExperimentReport:
                 )
             )
         return results
+
+    def _diversity(self, alphas: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Độ đa dạng cấu trúc của lô alpha.
+
+        Bốn mươi alpha thuộc một họ duy nhất khảo sát ít hơn hẳn bốn mươi alpha
+        trải trên mười họ, dù con số tổng giống nhau.
+        """
+        from ..history.fingerprint import fingerprint as _fp
+
+        exact, families, templates = set(), set(), set()
+        for row in alphas:
+            expression = row.get("expression")
+            if not expression:
+                continue
+            try:
+                meta = _fp(expression)
+            except Exception:
+                continue
+            exact.add(meta["exact"])
+            families.add(meta["family"])
+            templates.add(meta["template"])
+        total = len(alphas)
+        return {
+            "alphas": total,
+            "distinct_expressions": len(exact),
+            "distinct_families": len(families),
+            "distinct_templates": len(templates),
+            # Tỷ lệ họ trên tổng: 1.0 nghĩa là mỗi alpha một ý tưởng riêng,
+            # gần 0 nghĩa là cả lô chỉ khảo sát một ý tưởng.
+            "family_ratio": round(len(families) / total, 4) if total else 0.0,
+        }
 
     def _best_alpha(self, alphas: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         scored = [row for row in alphas if _metric(row, "sharpe") is not None]
@@ -313,6 +376,7 @@ class ExperimentReport:
                 ),
                 "sample_size": sample,
                 "required_sample": self.min_sample,
+                "evidence": EVIDENCE_INSUFFICIENT,
                 "confidence": round(sample / self.min_sample, 4) if self.min_sample else 0.0,
             }
 
@@ -330,6 +394,7 @@ class ExperimentReport:
                 ),
                 "sample_size": sample,
                 "required_sample": self.min_sample,
+                "evidence": EVIDENCE_INSUFFICIENT,
                 "confidence": 0.0,
             }
 
@@ -349,6 +414,7 @@ class ExperimentReport:
                 "sample_size": sample,
                 "effect_size": round(effect, 4),
                 "best_variant": best.label,
+                "evidence": evidence_level(sample, self.min_sample),
                 "confidence": round(min(1.0, sample / (self.min_sample * 2)), 4),
             }
 
@@ -379,6 +445,7 @@ class ExperimentReport:
             "effect_size": round(effect, 4),
             "best_variant": best.label,
             "worst_variant": worst.label,
+            "evidence": evidence_level(sample, self.min_sample),
             "confidence": round(min(1.0, sample / (self.min_sample * 2)), 4),
         }
 
@@ -465,10 +532,17 @@ class ExperimentReport:
                 f"Sharpe trung vị={variant['median_sharpe']}"
             )
 
+        diversity = report["structural_diversity"]
+        lines.append(
+            f"Đa dạng cấu trúc: {diversity['distinct_families']} họ trên "
+            f"{diversity['alphas']} alpha (tỷ lệ {diversity['family_ratio']})"
+        )
+
         conclusion = report["conclusion"]
         lines += [
             "",
-            f"Kết luận [{conclusion['verdict']}]:",
+            f"Kết luận [{conclusion['verdict']}] "
+            f"— mức bằng chứng: {conclusion.get('evidence', EVIDENCE_INSUFFICIENT)}:",
             f"  {conclusion['summary']}",
             "",
             "Bước tiếp theo:",

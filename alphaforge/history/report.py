@@ -6,13 +6,12 @@ không tốn hạn mức máy chủ.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..storage.db import Database
-from .analyzer import analyze, research_gaps, summarize
+from .analyzer import _json_list, analyze, research_gaps, summarize
 
 
 def load_history(
@@ -84,13 +83,3 @@ def build_report(
     return report
 
 
-def _json_list(raw: Any) -> List[str]:
-    if isinstance(raw, list):
-        return [str(item) for item in raw]
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except (TypeError, ValueError):
-        return []
-    return [str(item) for item in value] if isinstance(value, list) else []

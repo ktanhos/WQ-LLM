@@ -17,7 +17,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..storage.db import Database
+from ..storage.db import Database, load_json_dict as _load_json
 from .models import (
     AlphaLineage,
     Experiment,
@@ -222,6 +222,52 @@ class ResearchStore:
             result.append(item)
         return result
 
+    def experiment_detail(self, experiment_id: int) -> Optional[Dict[str, Any]]:
+        """Thí nghiệm kèm thiết kế, biến thể và alpha đã sinh ra từ nó.
+
+        Dòng lệnh và bảng theo dõi cùng gọi hàm này, để hai nơi không bao giờ
+        mô tả một thí nghiệm theo hai cách khác nhau.
+
+        Không dùng `ExperimentReport` ở đây vì báo cáo cần kết quả mô phỏng,
+        còn màn hình chi tiết phải trả lời được ngay cả khi thí nghiệm vừa
+        thiết kế xong và chưa có alpha nào chạy.
+        """
+        experiment = self.get_experiment(int(experiment_id))
+        if experiment is None:
+            return None
+
+        settings = dict(experiment.get("settings") or {})
+        # Thiết kế nằm lồng trong settings chứ không có cột riêng. Tách ra để
+        # người đọc phân biệt được thiết kế với thiết lập mô phỏng.
+        design = settings.pop("_design", {})
+        experiment["settings"] = settings
+        # Bỏ cột JSON thô: nó lặp lại nguyên phần vừa tách ra, kể cả `_design`,
+        # khiến người đọc thấy thiết kế ở hai chỗ với hai hình dạng khác nhau.
+        experiment.pop("settings_json", None)
+
+        connection = self.connect()
+        try:
+            alphas = [dict(row) for row in connection.execute(
+                "SELECT id, local_id, alpha_id, variant_id, status, evaluation_status,"
+                " score, expression FROM alphas WHERE experiment_id = ? ORDER BY id",
+                (int(experiment_id),),
+            ).fetchall()]
+        finally:
+            connection.close()
+
+        counts: Dict[str, int] = {}
+        for row in alphas:
+            key = str(row.get("status") or "UNKNOWN")
+            counts[key] = counts.get(key, 0) + 1
+
+        return {
+            "experiment": experiment,
+            "design": design,
+            "variants": self.list_variants(int(experiment_id)),
+            "alphas": alphas,
+            "status_counts": counts,
+        }
+
     # ------------------------------------------------------------------
     # Phả hệ alpha
     # ------------------------------------------------------------------
@@ -255,6 +301,40 @@ class ResearchStore:
             )
         finally:
             connection.close()
+
+    def link_platform_alpha(
+        self, local_id: str, alpha_id: str, *, mutation_type: str = ""
+    ) -> bool:
+        """Nối mã alpha của nền tảng vào chuỗi phả hệ đã có.
+
+        Alpha ID chỉ xuất hiện sau khi mô phỏng, còn phả hệ được ghi ngay lúc
+        sinh dưới định danh cục bộ. Hàm này thêm một mắt xích mới trỏ về mắt
+        xích cục bộ, nên chuỗi đầy đủ trở thành:
+
+            Research → Hypothesis → Experiment → Variant → LOCAL-128 → A12345
+
+        Giữ cả hai mắt xích thay vì đổi tên mắt xích cũ: alpha cục bộ vẫn tồn
+        tại kể cả khi mô phỏng thất bại, và đó cũng là thông tin nghiên cứu.
+        """
+        local = self.get_lineage(str(local_id))
+        if local is None or not alpha_id:
+            return False
+        self.save_lineage(
+            AlphaLineage(
+                alpha_id=str(alpha_id),
+                parent_alpha_id=str(local_id),
+                research_id=local.get("research_id"),
+                hypothesis_id=local.get("hypothesis_id"),
+                experiment_id=local.get("experiment_id"),
+                variant_id=local.get("variant_id"),
+                generation_strategy=str(local.get("generation_strategy") or ""),
+                generation_seed=local.get("generation_seed"),
+                mutation_type=mutation_type or str(local.get("mutation_type") or ""),
+                source=str(local.get("source") or ""),
+                source_alpha_id=str(local_id),
+            )
+        )
+        return True
 
     def get_lineage(self, alpha_id: str) -> Optional[Dict[str, Any]]:
         connection = self.connect()
@@ -303,13 +383,3 @@ class ResearchStore:
         return chain
 
 
-def _load_json(raw: Any) -> Dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if not raw:
-        return {}
-    try:
-        value = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}

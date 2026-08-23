@@ -59,12 +59,45 @@
   .FAILED { color: var(--fail); }
   .RUNNING, .PENDING, .SIMULATED, .SUBMITTED { color: var(--muted); }
   footer { color: var(--muted); font-size: 12px; }
+  nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+  nav button {
+    background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 13px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  nav button[aria-selected="true"] { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .screen[hidden] { display: none; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .lookup { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .lookup input {
+    flex: 1 1 240px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13px;
+  }
+  .lookup button {
+    background: var(--accent); color: var(--panel); border: 0; border-radius: 8px;
+    padding: 7px 16px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .reasons { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+  .suggestion { border-bottom: 1px solid var(--border); padding: 12px 0; }
+  .suggestion:last-child { border-bottom: 0; }
+  .suggestion h3 { font-size: 14px; margin: 0 0 4px; }
 </style>
 </head>
 <body>
 <h1>Alpha Forge</h1>
 <div class="sub">Bảng theo dõi tiến độ mô phỏng và xếp hạng alpha. Dữ liệu làm mới mỗi 5 giây.</div>
 
+<nav id="nav">
+  <button data-screen="queue" aria-selected="true">Hàng đợi</button>
+  <button data-screen="overview" aria-selected="false">Tổng quan nghiên cứu</button>
+  <button data-screen="gaps" aria-selected="false">Khoảng trống</button>
+  <button data-screen="priorities" aria-selected="false">Ưu tiên</button>
+  <button data-screen="experiments" aria-selected="false">Thí nghiệm</button>
+  <button data-screen="lineage" aria-selected="false">Phả hệ alpha</button>
+  <button data-screen="history" aria-selected="false">Alpha lịch sử</button>
+</nav>
+
+<div class="screen" data-screen="queue">
 <div class="grid" id="cards"></div>
 <div class="bar"><span id="progressBar"></span></div>
 
@@ -79,7 +112,6 @@
     <tbody></tbody>
   </table></div>
 </section>
-
 <section>
   <h2>Hoạt động gần đây</h2>
   <div class="scroll"><table id="recentTable">
@@ -89,7 +121,9 @@
     <tbody></tbody>
   </table></div>
 </section>
+</div>
 
+<div class="screen" data-screen="overview" hidden>
 <section>
   <h2>Trí nhớ nghiên cứu</h2>
   <p class="hint">
@@ -98,6 +132,26 @@
     nhỏ thì con số chỉ mang tính tham khảo.
   </p>
   <div class="cards" id="researchCards"></div>
+</section>
+<section>
+  <h2>Độ phủ theo từng chiều</h2>
+  <p class="hint">
+    Số giá trị khác nhau đã khảo sát ở mỗi chiều, kèm vài giá trị hay gặp nhất.
+    Đây là mức độ đã nghiên cứu, không phải đánh giá chất lượng.
+  </p>
+  <div class="scroll"><table id="coverageTable">
+    <thead><tr><th>Chiều</th><th class="num">Số giá trị</th><th>Hay gặp nhất</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Nên nghiên cứu gì tiếp</h2>
+  <p class="hint">
+    Đề xuất dựa trên độ phủ và thiếu hụt, kèm thí nghiệm gợi ý. Hệ thống chỉ đề
+    xuất; quyết định chạy hay không là của người nghiên cứu.
+  </p>
+  <div id="nextList"></div>
 </section>
 
 <section>
@@ -111,7 +165,6 @@
     <tbody></tbody>
   </table></div>
 </section>
-
 <section>
   <h2>Họ cấu trúc cho kết quả kém</h2>
   <p class="hint">Bộ sinh tự hạ ưu tiên các họ này. Chúng không bị loại hẳn vì thị trường có thể đổi trạng thái.</p>
@@ -122,7 +175,9 @@
     <tbody></tbody>
   </table></div>
 </section>
+</div>
 
+<div class="screen" data-screen="gaps" hidden>
 <section>
   <h2>Khoảng trống nghiên cứu</h2>
   <p class="hint">Họ còn ít alpha nhưng đã cho tín hiệu khả quan, đáng dành thêm hạn mức mô phỏng.</p>
@@ -133,7 +188,94 @@
     <tbody></tbody>
   </table></div>
 </section>
+<section>
+  <h2>Thiếu hụt theo từng loại</h2>
+  <p class="hint">Mỗi dòng kèm lý do vì sao được coi là thiếu hụt.</p>
+  <div class="scroll"><table id="detailedGapsTable">
+    <thead><tr>
+      <th>Loại</th><th>Khóa</th><th class="num">Đã thử</th>
+      <th class="num">Ưu tiên</th><th class="num">Độ tin cậy</th><th>Lý do</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
 
+
+</div>
+
+<div class="screen" data-screen="priorities" hidden>
+<section>
+  <h2>Ưu tiên nghiên cứu</h2>
+  <p class="hint">
+    Điểm ưu tiên là tích của bốn thành phần, mỗi thành phần trong khoảng 0 tới 1.
+    Cỡ mẫu nhỏ thì độ tin cậy thấp và con số chỉ mang tính tham khảo.
+  </p>
+  <div class="lookup">
+    <select id="priorityDimension">
+      <option value="family">Họ cấu trúc</option>
+      <option value="field">Trường dữ liệu</option>
+      <option value="operator">Toán tử</option>
+      <option value="template">Mẫu biểu thức</option>
+    </select>
+  </div>
+  <div class="scroll"><table id="prioritiesTable">
+    <thead><tr>
+      <th>Khóa</th><th class="num">Cỡ mẫu</th><th class="num">Điểm</th>
+      <th class="num">Độ tin cậy</th><th>Lý do</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+
+</div>
+
+<div class="screen" data-screen="experiments" hidden>
+<section>
+  <h2>Thí nghiệm</h2>
+  <p class="hint">Bấm vào một dòng để xem thiết kế và các biến thể của nó.</p>
+  <div class="scroll"><table id="experimentsTable">
+    <thead><tr>
+      <th>Mã</th><th>Tên</th><th>Biến khảo sát</th><th>Biểu thức gốc</th>
+      <th>Trạng thái</th><th class="num">Số alpha</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section id="experimentDetail">
+  <h2>Chi tiết thí nghiệm</h2>
+  <p class="hint" id="experimentDetailHint">Chưa chọn thí nghiệm nào.</p>
+  <div class="scroll"><table id="variantsTable">
+    <thead><tr>
+      <th>Biến thể</th><th>Biểu thức</th><th>Trạng thái</th>
+      <th class="num">Số alpha</th><th class="num">Sharpe trung vị</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+
+</div>
+
+<div class="screen" data-screen="lineage" hidden>
+<section>
+  <h2>Phả hệ alpha</h2>
+  <p class="hint">
+    Tra bằng mã nền tảng hoặc mã cục bộ. Alpha có mã cục bộ ngay khi sinh ra và
+    chỉ có mã nền tảng sau khi mô phỏng xong.
+  </p>
+  <div class="lookup">
+    <input id="lineageInput" placeholder="Ví dụ: LOCAL-00000001 hoặc mã alpha trên BRAIN">
+    <button id="lineageButton">Tra cứu</button>
+  </div>
+  <div id="lineageResult"></div>
+</section>
+
+
+</div>
+
+<div class="screen" data-screen="history" hidden>
 <section>
   <h2>Lịch sử nộp trên BRAIN</h2>
   <div class="scroll"><table id="submissionsTable">
@@ -144,7 +286,6 @@
     <tbody></tbody>
   </table></div>
 </section>
-
 <section>
   <h2>Dự án nghiên cứu</h2>
   <div class="scroll"><table id="projectsTable">
@@ -154,7 +295,6 @@
     <tbody></tbody>
   </table></div>
 </section>
-
 <section>
   <h2>Tương quan</h2>
   <div class="scroll"><table id="correlationTable">
@@ -164,7 +304,7 @@
     <tbody></tbody>
   </table></div>
 </section>
-
+</div>
 <footer>Điểm tổng hợp chỉ dùng để xếp thứ tự ưu tiên xem xét, không thay thế phán đoán của người nghiên cứu.</footer>
 
 <script>
@@ -252,57 +392,13 @@ function rows(tableId, items, render, colspan) {
 }
 
 async function refreshResearch() {
+  // Màn hình alpha lịch sử: những gì đã nộp trên BRAIN và bối cảnh dự án.
   try {
-    const [report, families, gaps, submissions, projects, correlation] = await Promise.all([
-      fetch("/api/history/report").then(r => r.json()),
-      fetch("/api/research/families?limit=50").then(r => r.json()),
-      fetch("/api/research/gaps?limit=20").then(r => r.json()),
+    const [submissions, projects, correlation] = await Promise.all([
       fetch("/api/submissions?limit=50").then(r => r.json()),
       fetch("/api/research/projects").then(r => r.json()),
       fetch("/api/correlation?limit=50").then(r => r.json())
     ]);
-
-    const a = report.analysis || {};
-    const sharpe = (a.metrics || {}).sharpe || {};
-    const counts = a.counts || {};
-    const researchCards = [
-      ["Alpha lịch sử", report.total ?? 0],
-      ["Đạt", counts.passed ?? 0],
-      ["Bị loại", counts.rejected ?? 0],
-      ["Lỗi", counts.failed ?? 0],
-      ["Sharpe trung vị", num(sharpe.median, 3) || "—"],
-      ["Sharpe phân vị 75", num(sharpe.p75, 3) || "—"],
-      ["Họ cấu trúc", ((a.distribution || {}).family || []).length]
-    ];
-    document.getElementById("researchCards").innerHTML = researchCards.map(([label, value]) =>
-      `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`
-    ).join("");
-
-    rows("bestTable", families.high_performing, item => `<tr>
-      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
-      <td class="num">${item.count}</td>
-      <td class="num">${item.passed}</td>
-      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
-      <td class="num">${num(item.sharpe.median, 3)}</td>
-      <td class="num">${num(item.sharpe.p25, 3)}</td>
-      <td class="num">${num(item.sharpe.p75, 3)}</td>
-    </tr>`, 7);
-
-    rows("worstTable", families.low_performing, item => `<tr>
-      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
-      <td class="num">${item.count}</td>
-      <td class="num">${item.passed}</td>
-      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
-      <td class="num">${num(item.sharpe.median, 3)}</td>
-    </tr>`, 5);
-
-    rows("gapsTable", gaps.items, item => `<tr>
-      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
-      <td class="num">${item.count}</td>
-      <td class="num">${num(item.median_sharpe, 3)}</td>
-      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
-      <td class="num">${num(item.priority, 3)}</td>
-    </tr>`, 5);
 
     rows("submissionsTable", submissions.items, item => `<tr>
       <td>${item.submitted || "—"}</td>
@@ -335,8 +431,300 @@ async function refreshResearch() {
   }
 }
 
+async function refreshFamilies() {
+  try {
+    const families = await fetch("/api/research/families?limit=50").then(r => r.json());
+
+    rows("bestTable", families.high_performing, item => `<tr>
+      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
+      <td class="num">${item.count}</td>
+      <td class="num">${item.passed}</td>
+      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
+      <td class="num">${num(item.sharpe.median, 3)}</td>
+      <td class="num">${num(item.sharpe.p25, 3)}</td>
+      <td class="num">${num(item.sharpe.p75, 3)}</td>
+    </tr>`, 7);
+
+    rows("worstTable", families.low_performing, item => `<tr>
+      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
+      <td class="num">${item.count}</td>
+      <td class="num">${item.passed}</td>
+      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
+      <td class="num">${num(item.sharpe.median, 3)}</td>
+    </tr>`, 5);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// ----------------------------------------------------------------------
+// Điều hướng giữa các màn hình
+// ----------------------------------------------------------------------
+// Mỗi màn hình chỉ nạp dữ liệu khi được mở lần đầu. Vài màn hình phải quét lại
+// toàn bộ lịch sử, nên nạp sẵn tất cả ngay từ đầu sẽ làm trang chậm hẳn.
+const LOADED = new Set(["queue"]);
+
+const SCREEN_LOADERS = {
+  overview: () => { refreshOverview(); refreshFamilies(); },
+  gaps: refreshGaps,
+  priorities: refreshPriorities,
+  experiments: refreshExperiments,
+  history: refreshResearch
+};
+
+function showScreen(name) {
+  document.querySelectorAll(".screen").forEach(node => {
+    node.hidden = node.dataset.screen !== name;
+  });
+  document.querySelectorAll("#nav button").forEach(node => {
+    node.setAttribute("aria-selected", String(node.dataset.screen === name));
+  });
+  if (!LOADED.has(name)) {
+    LOADED.add(name);
+    const loader = SCREEN_LOADERS[name];
+    if (loader) loader();
+  }
+}
+
+document.getElementById("nav").addEventListener("click", event => {
+  const button = event.target.closest("button[data-screen]");
+  if (button) showScreen(button.dataset.screen);
+});
+
+// ----------------------------------------------------------------------
+// Tổng quan nghiên cứu
+// ----------------------------------------------------------------------
+async function refreshOverview() {
+  try {
+    const overview = await fetch("/api/research/overview").then(r => r.json());
+    const stats = overview.statistics || {};
+    const counts = stats.counts || {};
+    // Tách "đã sinh" khỏi "đã mô phỏng": sinh ra một biểu thức không đồng
+    // nghĩa với đã tốn một lượt mô phỏng của tài khoản.
+    const cards = [
+      ["Đã sinh", counts.tested ?? 0],
+      ["Đã mô phỏng", counts.simulated ?? 0],
+      ["Đạt", counts.passed ?? 0],
+      ["Bị loại", counts.rejected ?? 0],
+      ["Đã nộp", counts.submitted ?? 0],
+      ["Ứng viên chờ người xem", overview.candidates ?? 0],
+      ["Sharpe trung vị", num(stats.median_sharpe, 3) || "—"],
+      ["Sharpe tốt nhất", num(stats.best_sharpe, 3) || "—"]
+    ];
+    document.getElementById("researchCards").innerHTML = cards.map(([label, value]) =>
+      `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`
+    ).join("");
+
+    const sizes = stats.coverage_sizes || {};
+    const top = overview.top_values || {};
+    rows("coverageTable", Object.keys(top), dimension => {
+      const values = top[dimension] || {};
+      const listed = Object.entries(values)
+        .map(([key, count]) => `${shorten(key, 14)}=${count}`).join(", ");
+      return `<tr>
+        <td>${dimension}</td>
+        <td class="num">${sizes[dimension] ?? 0}</td>
+        <td>${listed || "chưa khảo sát"}</td>
+      </tr>`;
+    }, 3);
+
+    const next = await fetch("/api/research/next?limit=5").then(r => r.json());
+    const items = next.items || [];
+    document.getElementById("nextList").innerHTML = items.map(item => {
+      const experiment = item.suggested_experiment || {};
+      return `<div class="suggestion">
+        <h3>${item.rank}. ${item.direction}</h3>
+        <ul class="reasons">${(item.reasons || []).map(r => `<li>${r.replace(/^-\s*/, "")}</li>`).join("")}</ul>
+        <div class="hint">
+          Cỡ mẫu ${item.sample_size} · Bão hòa ${num(item.saturation, 2)} ·
+          Ưu tiên ${num(item.priority, 3)} · Độ tin cậy ${num(item.confidence, 2)}
+        </div>
+        ${experiment.base_expression ? `<div class="hint">
+          Thí nghiệm gợi ý: <code>${experiment.base_expression}</code>
+          — đổi <b>${experiment.variable}</b> qua ${JSON.stringify(experiment.values || [])}
+        </div>` : ""}
+      </div>`;
+    }).join("") || `<p class="hint">Chưa đủ dữ liệu để đề xuất. Chạy: alphaforge history scan</p>`;
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// ----------------------------------------------------------------------
+// Khoảng trống và ưu tiên
+// ----------------------------------------------------------------------
+async function refreshGaps() {
+  try {
+    const [famGaps, detailed] = await Promise.all([
+      fetch("/api/research/gaps?limit=20").then(r => r.json()),
+      fetch("/api/research/gaps/detailed?limit=40").then(r => r.json())
+    ]);
+
+    rows("gapsTable", famGaps.items, item => `<tr>
+      <td><code title="${item.family}">${famLabel(item.family)}</code></td>
+      <td class="num">${item.count}</td>
+      <td class="num">${num(item.median_sharpe, 3)}</td>
+      <td class="num">${num(item.pass_rate * 100, 1)} %</td>
+      <td class="num">${num(item.priority, 3)}</td>
+    </tr>`, 5);
+
+    rows("detailedGapsTable", detailed.items, item => `<tr>
+      <td>${item.kind || ""}</td>
+      <td><code title="${item.key}">${shorten(item.key, 20)}</code></td>
+      <td class="num">${item.count ?? 0}</td>
+      <td class="num">${num(item.priority, 3)}</td>
+      <td class="num">${num(item.confidence, 2)}</td>
+      <td>${shorten(item.reason || "", 110)}</td>
+    </tr>`, 6);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function refreshPriorities() {
+  const dimension = document.getElementById("priorityDimension").value;
+  try {
+    const payload = await fetch(
+      `/api/research/priorities?dimension=${dimension}&limit=30`
+    ).then(r => r.json());
+    rows("prioritiesTable", payload.items, item => `<tr>
+      <td><code title="${item.key}">${shorten(item.key, 20)}</code></td>
+      <td class="num">${item.sample_size ?? 0}</td>
+      <td class="num">${num(item.score, 3)}</td>
+      <td class="num">${num(item.confidence, 2)}</td>
+      <td>${shorten((item.reasons || []).join(" "), 130)}</td>
+    </tr>`, 5);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+document.getElementById("priorityDimension").addEventListener("change", refreshPriorities);
+
+// ----------------------------------------------------------------------
+// Thí nghiệm
+// ----------------------------------------------------------------------
+async function refreshExperiments() {
+  try {
+    const payload = await fetch("/api/experiments").then(r => r.json());
+    rows("experimentsTable", payload.items, item => {
+      const outcome = item.outcome || {};
+      return `<tr data-experiment="${item.id}" style="cursor:pointer">
+        <td>${item.id}</td>
+        <td>${shorten(item.name, 40)}</td>
+        <td>${item.variable_changed || ""}</td>
+        <td><code>${shorten(item.base_expression, 45)}</code></td>
+        <td><span class="tag">${item.status || ""}</span></td>
+        <td class="num">${outcome.total ?? 0}</td>
+      </tr>`;
+    }, 6);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+document.querySelector("#experimentsTable tbody").addEventListener("click", event => {
+  const row = event.target.closest("tr[data-experiment]");
+  if (row) showExperiment(row.dataset.experiment);
+});
+
+async function showExperiment(experimentId) {
+  const hint = document.getElementById("experimentDetailHint");
+  try {
+    const [detail, report] = await Promise.all([
+      fetch(`/api/experiments/${experimentId}`).then(r => r.json()),
+      fetch(`/api/experiments/${experimentId}/report`).then(r => r.json())
+    ]);
+    if (detail.error) {
+      hint.textContent = detail.error;
+      return;
+    }
+    const experiment = detail.experiment || {};
+    const design = detail.design || {};
+    const counts = detail.status_counts || {};
+    const summary = Object.entries(counts)
+      .map(([key, value]) => `${key}=${value}`).join(" · ") || "chưa có alpha nào";
+    hint.innerHTML = `
+      <b>${experiment.name || ""}</b> — đổi <b>${experiment.variable_changed || ""}</b>
+      qua ${JSON.stringify(design.values || [])}<br>
+      Biểu thức gốc: <code>${experiment.base_expression || ""}</code><br>
+      Alpha: ${summary}${(report.conclusion || {}).evidence ? ` · Mức bằng chứng: ${report.conclusion.evidence}` : ""}`;
+
+    // Báo cáo tính theo biến thể; ghép vào để mỗi dòng có cả cỡ mẫu lẫn kết quả.
+    const byLabel = {};
+    (report.variants || []).forEach(item => { byLabel[item.label] = item; });
+
+    rows("variantsTable", detail.variants, item => {
+      const result = byLabel[item.label] || {};
+      return `<tr>
+        <td>${item.label || ""}</td>
+        <td><code title="${(item.expression || "").replace(/"/g, "&quot;")}">${shorten(item.expression, 50)}</code></td>
+        <td><span class="tag">${item.result_status || ""}</span></td>
+        <td class="num">${result.sample_size ?? 0}</td>
+        <td class="num">${num(result.median_sharpe, 3)}</td>
+      </tr>`;
+    }, 5);
+  } catch (err) {
+    console.error(err);
+    hint.textContent = "Không đọc được chi tiết thí nghiệm.";
+  }
+}
+
+// ----------------------------------------------------------------------
+// Phả hệ alpha
+// ----------------------------------------------------------------------
+async function lookupLineage() {
+  const key = document.getElementById("lineageInput").value.trim();
+  const target = document.getElementById("lineageResult");
+  if (!key) {
+    target.innerHTML = `<p class="hint">Nhập mã alpha để tra cứu.</p>`;
+    return;
+  }
+  try {
+    const payload = await fetch(
+      `/api/research/lineage/${encodeURIComponent(key)}`
+    ).then(r => r.json());
+    const alpha = payload.alpha;
+    const chain = payload.ancestry || [];
+    if (!alpha && !chain.length) {
+      target.innerHTML = `<p class="hint">Không tìm thấy alpha nào mang mã này.</p>`;
+      return;
+    }
+    target.innerHTML = `
+      ${alpha ? `<p class="hint">
+        <code>${alpha.expression || ""}</code><br>
+        Trạng thái ${alpha.status || ""} · Thẩm định ${alpha.evaluation_status || ""} ·
+        Điểm ${num(alpha.score, 3) || "—"} · Mã cục bộ ${alpha.local_id || "—"} ·
+        Mã nền tảng ${alpha.alpha_id || "chưa mô phỏng"}
+      </p>` : `<p class="hint">Chỉ có bản ghi phả hệ, chưa có alpha tương ứng trong hàng đợi.</p>`}
+      <div class="scroll"><table>
+        <thead><tr>
+          <th>Mã alpha</th><th>Cha</th><th>Thí nghiệm</th><th>Biến thể</th>
+          <th>Chiến lược</th><th>Hạt giống</th><th>Nguồn</th>
+        </tr></thead>
+        <tbody>${chain.map(item => `<tr>
+          <td>${item.alpha_id || ""}</td>
+          <td>${item.parent_alpha_id || "—"}</td>
+          <td>${item.experiment_id ?? "—"}</td>
+          <td>${item.variant_id ?? "—"}</td>
+          <td>${item.generation_strategy || ""}</td>
+          <td>${item.generation_seed ?? "—"}</td>
+          <td>${item.source || ""}</td>
+        </tr>`).join("") || `<tr><td colspan="7">Chưa có bản ghi phả hệ.</td></tr>`}</tbody>
+      </table></div>
+      <p class="hint">${(payload.children || []).length} alpha con được sinh ra từ alpha này.</p>`;
+  } catch (err) {
+    console.error(err);
+    target.innerHTML = `<p class="hint">Không tra cứu được.</p>`;
+  }
+}
+
+document.getElementById("lineageButton").addEventListener("click", lookupLineage);
+document.getElementById("lineageInput").addEventListener("keydown", event => {
+  if (event.key === "Enter") lookupLineage();
+});
+
 refresh();
-refreshResearch();
 setInterval(refresh, 5000);
 // Phần nghiên cứu thay đổi chậm hơn nhiều so với hàng đợi mô phỏng, và mỗi lượt
 // làm mới phải quét lại toàn bộ lịch sử, nên giãn chu kỳ ra để không chiếm CPU.

@@ -1,5 +1,10 @@
 """Lớp nghiên cứu: dự án, giả thuyết, thí nghiệm, trí nhớ và phả hệ alpha."""
 
+from .advisor import (
+    ResearchAdvisor,
+    RuleBasedResearchAdvisor,
+    Suggestion,
+)
 from .experiment import ExperimentDesign, ExperimentEngine, ExperimentError
 from .gap import Gap, ResearchGap
 from .memory import GenerationContext, ResearchMemory, ResearchProfile
@@ -12,6 +17,7 @@ from .models import (
 )
 from .plan import GenerationPlan, PlanError
 from .priority import PriorityScore, PriorityWeights, ResearchPriority
+from .report import ExperimentReport, evidence_level
 from .store import ResearchStore
 
 __all__ = [
@@ -34,4 +40,9 @@ __all__ = [
     "ExperimentDesign",
     "ExperimentEngine",
     "ExperimentError",
+    "ResearchAdvisor",
+    "RuleBasedResearchAdvisor",
+    "Suggestion",
+    "ExperimentReport",
+    "evidence_level",
 ]

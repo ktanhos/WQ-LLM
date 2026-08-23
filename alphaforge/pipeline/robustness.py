@@ -22,6 +22,8 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from ..storage.db import maybe_float as _as_float
+
 #: Tên các phép kiểm.
 CHECK_YEAR_BY_YEAR = "year_by_year"
 CHECK_PARAMETER_SENSITIVITY = "parameter_sensitivity"
@@ -330,8 +332,3 @@ def _numeric_series(metrics: Dict[str, Any], keys: Iterable[str]) -> List[float]
     return []
 
 
-def _as_float(value: Any) -> Optional[float]:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None

@@ -1,4 +1,229 @@
-# Báo cáo audit mã nguồn
+# Báo cáo audit — Alpha Research Hub
+
+**Phạm vi:** chỉ mã nguồn và môi trường cục bộ.
+**Ngày:** 2026-08-23
+**Nhánh:** `claude/repo-permissions-check-fnkojz`
+**Kết luận:** `CODE VERIFIED` — **không phải** `BRAIN VERIFIED`.
+
+Đợt này không dùng thông tin đăng nhập, không gọi WorldQuant BRAIN, không chạy
+mô phỏng thật và không nộp alpha. Mọi tương tác với máy chủ đều qua bản giả lập.
+Phần tích hợp BRAIN vì vậy vẫn ở mức `NOT TESTED`, không phải `PASS`.
+
+---
+
+## 1. Kết quả cổng kiểm tra
+
+| Cổng | Lệnh | Kết quả |
+| --- | --- | --- |
+| Kiểm thử | `pytest` | **PASS** — 512 passed, 38s |
+| Biên dịch | `python -m compileall alphaforge tests` | **PASS** — exit 0 |
+| Nhập package | duyệt `pkgutil.walk_packages` | **PASS** — 40/40 module, 0 lỗi |
+| Điểm vào CLI | `alphaforge --help` | **PASS** |
+| Trợ giúp mọi lệnh con | 41 lệnh con × `--help` | **PASS** — 0 lỗi |
+| Chặn socket | 18 lệnh chỉ đọc chạy khi socket bị chặn | **PASS** — 0 lệnh gọi mạng |
+| Trùng hàm cấp mô đun | phân tích AST | **PASS** — 0 bản trùng |
+| Import thừa | `pyflakes` | **PASS** — chỉ còn 1 cảnh báo giả (`# noqa` thăm dò) |
+
+Số kiểm thử tăng từ **403** lên **512** trong đợt này.
+
+---
+
+## 2. Lỗi phát hiện và đã sửa
+
+Sáu lỗi dưới đây đều **im lặng**: không lỗi nào làm chương trình dừng, và không
+lỗi nào lộ ra ở nhật ký. Chúng chỉ hiện ra khi viết kiểm thử cho trường hợp biên.
+
+### L1 — Bộ lọc trùng cấu trúc giết sạch biến thể thí nghiệm · **ĐÃ SỬA**
+
+`EvaluationPipeline._structural_match` so mọi alpha ở mức họ cấu trúc. Nhưng
+biến thể của một thí nghiệm khảo sát cửa sổ **luôn** cùng một họ, nên mọi biến
+thể đều bị loại và `promote_to_candidate` trả về 0 cho tất cả.
+
+Triệu chứng duy nhất: mọi báo cáo thí nghiệm đều hiện cỡ mẫu bằng không.
+
+Sửa: alpha thuộc thí nghiệm so ở mức `parameter`, alpha sinh tự do vẫn so ở mức
+`family`. Trùng lặp ngẫu nhiên bị chặn, khảo sát có chủ đích thì không.
+
+### L2 — Lô sinh sau xóa alpha đang chờ của lô trước · **ĐÃ SỬA**
+
+`_store_invalid` cập nhật `WHERE expression = ? AND status = 'PENDING'` mà không
+giới hạn theo lượt sinh. Một biểu thức bị lô sau từ chối vì trùng sẽ lật luôn
+bản ghi đang chờ của lô trước sang `INVALID`.
+
+Alpha đó không bao giờ được mô phỏng, và không có gì báo cho ai biết.
+
+Sửa: thêm điều kiện `run_id IS ?`. Kiểm thử hồi quy:
+`test_a_later_batch_does_not_invalidate_an_already_queued_alpha`.
+
+### L3 — Siêu dữ liệu thiết kế lọt vào thiết lập mô phỏng · **ĐÃ SỬA**
+
+Thiết kế thí nghiệm được lưu lồng trong `experiments.settings_json["_design"]`.
+`build_plan` chép nguyên khối đó vào `plan.settings`, và `plan.settings` trở
+thành `settings_json` của từng alpha — tức là tham số gửi lên máy chủ.
+
+Hai hậu quả: mã băm chống trùng tính cả `_design`, nên cùng một biểu thức với
+cùng thiết lập thật lại ra hai mã băm khác nhau ở hai thí nghiệm và bản trùng
+lọt qua ràng buộc `UNIQUE`; và siêu dữ liệu thiết kế sẽ được gửi lên BRAIN như
+thể nó là một tham số mô phỏng.
+
+Sửa: `_simulation_settings` bóc `_design` ra đúng tại ranh giới thiết kế trở
+thành thiết lập chạy. Kiểm thử hồi quy:
+`test_design_metadata_never_reaches_the_simulation_settings`.
+
+### L4 — Một họ cấu trúc vừa "tốt nhất" vừa "kém nhất" · **ĐÃ SỬA**
+
+`analyze()` cắt mười phần tử đầu và mười phần tử cuối của **cùng một** danh sách
+xếp hạng. Khi kho chỉ có ít họ đủ cỡ mẫu, cùng một họ xuất hiện ở cả hai bảng và
+bảng theo dõi tự mâu thuẫn với chính nó.
+
+Sửa: chia đôi danh sách, làm tròn lên để một họ duy nhất vẫn được xếp vào nhóm
+trên thay vì rơi xuống nhóm dưới.
+
+### L5 — Hai mô đun phân loại `UNSUBMITTED` khác nhau · **ĐÃ SỬA**
+
+`history.analyzer` xếp `UNSUBMITTED` và `DECOMMISSIONED` vào nhóm bị loại, còn
+`research.memory` thì không. Cùng một tập alpha cho ra tỷ lệ đạt khác nhau tùy
+mô đun nào tính.
+
+Sửa: thống nhất về cách của `analyzer`. Một alpha đã mô phỏng rồi bị người
+nghiên cứu bỏ không nộp là bằng chứng phủ định, không phải bằng chứng thiếu.
+
+### L6 — Bảng theo dõi đọc sai chỗ mức bằng chứng · **ĐÃ SỬA**
+
+Màn hình chi tiết thí nghiệm đọc `report.evidence_level`, trong khi báo cáo đặt
+giá trị đó ở `report.conclusion.evidence`. Trường luôn rỗng nên mức bằng chứng
+không bao giờ hiện ra — đúng thông tin quan trọng nhất của báo cáo.
+
+---
+
+## 3. Trùng lặp mã đã gộp
+
+| Hàm | Số bản sao | Gộp về |
+| --- | --- | --- |
+| `_load_json` | 3 | `storage.db.load_json_dict` |
+| `_as_float` / `_maybe_float` | 4 | `storage.db.maybe_float` |
+| `utc_now` | 2 | `storage.db.utc_now` |
+| `_json_list` | 2 | `history.analyzer._json_list` |
+| chi tiết thí nghiệm | 2 (CLI và web) | `ResearchStore.experiment_detail` |
+
+Các bản sao của `_load_json` đã **lệch nhau**: bản trong `storage/db.py` không
+xử lý đầu vào đã là từ điển. Đó chính là kiểu lỗi mà việc gộp ngăn được.
+
+Sau khi gộp: 0 tên hàm cấp mô đun bị trùng trong toàn gói.
+
+---
+
+## 4. Chức năng đã bổ sung
+
+### Dòng lệnh
+
+| Lệnh | Trả lời câu hỏi |
+| --- | --- |
+| `research memory` | hệ thống đã nghiên cứu những gì, tới đâu |
+| `research next` | nên nghiên cứu gì tiếp, kèm thí nghiệm gợi ý |
+| `experiment show` | thiết kế, biến thể và alpha đã sinh của một thí nghiệm |
+| `experiment plan` | xem trước kế hoạch sinh, không lưu và không xếp hàng |
+| `experiment generate` | tên rõ nghĩa cho `experiment run`, giữ cả hai tên |
+
+`research memory` tách **đã sinh** khỏi **đã mô phỏng** ngay ở dòng đầu, vì đó
+là chỗ dễ hiểu nhầm nhất: sinh ra một biểu thức không đồng nghĩa với đã tốn một
+lượt mô phỏng của tài khoản.
+
+### Bảng theo dõi
+
+Bảy màn hình thay cho một trang cuộn dài: Hàng đợi, Tổng quan nghiên cứu, Khoảng
+trống, Ưu tiên, Thí nghiệm, Phả hệ alpha, Alpha lịch sử. Mỗi màn hình chỉ nạp dữ
+liệu khi được mở lần đầu.
+
+Đã kiểm bằng trình duyệt thật (Chromium qua Playwright): cả bảy màn hình hiển
+thị đúng, đường đi tương tác (chọn thí nghiệm, tra phả hệ) chạy được, không có
+lỗi JavaScript nào.
+
+Điểm cuối mới: `/api/research/overview`, `/api/research/next`,
+`/api/experiments/{id}`. `/api/research/lineage/{id}` nay nhận cả mã cục bộ lẫn
+mã nền tảng; `/api/research/gaps/detailed` có thêm `per_kind` để một chiều nhiều
+giá trị không chiếm hết màn hình.
+
+### Cố vấn nghiên cứu
+
+`research/advisor.py` gộp độ phủ, thiếu hụt và điểm ưu tiên thành đề xuất hướng
+nghiên cứu kèm bản thiết kế thí nghiệm. Nó **chỉ đề xuất**: không sinh alpha,
+không chạy mô phỏng, không sửa trí nhớ, không nộp gì.
+
+Mọi lý do được viết dưới dạng phát biểu về độ phủ và luôn kết thúc bằng câu nhắc
+rằng đây là mức độ đã nghiên cứu chứ không phải dự báo hiệu năng.
+
+---
+
+## 5. Vòng nghiên cứu khép kín — **PASS**
+
+`tests/test_research_loop.py` đi hết chuỗi trong một lượt chạy, không có lệnh
+gọi mạng nào:
+
+```text
+Historical mock → Research Memory → Research Gap → Research Priority
+→ Hypothesis → Experiment → Generation Plan → Generator → Validation
+→ Mock Simulation → Score → Structural Similarity → Candidate
+→ Research Feedback → Research Gap mới → hướng nghiên cứu tiếp theo
+```
+
+Ba kiểm thử đi kèm: không alpha nào bị nộp, lượt chạy tái lập được với cùng hạt
+giống, và trí nhớ phân biệt được "đã sinh" với "đã mô phỏng".
+
+---
+
+## 6. An toàn nộp alpha — **PASS**
+
+| Kiểm tra | Kết quả |
+| --- | --- |
+| Lệnh gọi HTTP ngoài `brain/client.py` | chỉ `llm/ollama.py`, gọi máy chủ Ollama cục bộ, không phải BRAIN |
+| Lệnh `POST` tới BRAIN | đúng hai: `/authentication` và `/simulations` |
+| Điểm cuối nộp alpha | **không tồn tại trong toàn kho** |
+| Nơi ghi `Status.SUBMITTED` | đúng một: `mark_submitted` |
+| Điều kiện của `mark_submitted` | từ chối trừ khi alpha đã ở `CANDIDATE` hoặc `HUMAN_REVIEW` |
+
+`/simulations` gửi công việc mô phỏng, không nộp alpha. Bậc cuối cùng mà máy đạt
+tới là `CANDIDATE`; chuyển tiếp là việc của người.
+
+---
+
+## 7. Kiểm thử đã thêm
+
+| Tệp | Nội dung |
+| --- | --- |
+| `test_research_gap.py` | kho rỗng, cỡ mẫu nhỏ, thiếu độ phủ, cùng họ khác tham số, khác trường cùng mẫu |
+| `test_research_priority.py` | độ tin cậy theo cỡ mẫu, thiếu chỉ số là trung tính, xếp hạng, trọng số cấu hình được |
+| `test_generation_plan.py` | chế độ direct, tham số suy biến, vòng lưu và đọc lại |
+| `test_experiment_generation.py` | biến thể vào hàng đợi nguyên vẹn, ba mức trùng lặp, hai thí nghiệm cùng biểu thức |
+| `test_feedback.py` | thiên lệch sống sót, chỉ số thiếu, trạng thái lẫn lộn, phản hồi về trí nhớ |
+| `test_research_report.py` | bốn mức bằng chứng, không kết luận khi chưa đủ mẫu, độ đa dạng cấu trúc |
+
+Bổ sung vào tệp sẵn có: 14 kiểm thử CLI cho lệnh mới, 10 kiểm thử web cho màn
+hình mới, 7 kiểm thử vân tay cho ba hàm trước đó chưa ai gọi, 2 kiểm thử hồi quy
+cho lỗi "vừa tốt nhất vừa kém nhất".
+
+`tests/conftest.py` có thêm `insert_historical` dùng chung, để mọi tệp kiểm thử
+gieo dữ liệu lịch sử theo đúng một cách.
+
+---
+
+## 8. Giới hạn còn lại
+
+Phần tích hợp BRAIN thật chưa được kiểm chứng và **không thể** kiểm chứng trong
+phạm vi này. Cụ thể: hình dạng phản hồi thật của `/simulations`, hành vi thật
+của giới hạn tần suất, và cấu trúc thật của bảng tương quan sản phẩm. Bản giả
+lập dựng theo tài liệu, không theo quan sát.
+
+`brain/client.py` có `get_operators` chưa nơi nào gọi. Giữ lại vì nó thuộc bề
+mặt API của lớp client, nhưng cần biết là nó chưa từng chạy.
+
+Bộ sinh vẫn dựa trên mẫu và tổ hợp toán tử. Cách này tái lập được nhưng độ đa
+dạng thấp hơn so với sinh bằng mô hình ngôn ngữ.
+
+---
+---
+
+# Phụ lục — báo cáo audit đợt trước
 
 **Phạm vi:** chỉ mã nguồn và môi trường cục bộ.
 **Ngày:** 2026-08-23

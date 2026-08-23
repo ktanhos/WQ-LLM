@@ -11,7 +11,7 @@ import pytest
 from alphaforge.cli import build_parser, main
 from alphaforge.config import Settings
 from alphaforge.storage.db import Database, Status
-from conftest import FakeBrainClient, make_alpha, page
+from conftest import FakeBrainClient, insert_historical, make_alpha, page
 
 
 @pytest.fixture()
@@ -246,3 +246,135 @@ def test_research_lineage_of_unknown_alpha_is_empty(monkeypatch, settings, capsy
     payload = json.loads(capsys.readouterr().out)
     assert payload["ancestry"] == []
     assert payload["children"] == []
+
+
+# ----------------------------------------------------------------------
+# Trí nhớ nghiên cứu và đề xuất hướng tiếp theo
+# ----------------------------------------------------------------------
+def test_research_memory_on_empty_database_does_not_crash(monkeypatch, settings, capsys):
+    """Kho rỗng phải in ra số không, không được ném lỗi.
+
+    Đây là trạng thái của mọi người dùng mới, nên nó là đường đi thường gặp
+    chứ không phải trường hợp biên hiếm.
+    """
+    assert run(monkeypatch, settings, ["research", "memory"]) == 0
+    out = capsys.readouterr().out
+    assert "Đã sinh:      0" in out
+    assert "chưa khảo sát" in out
+
+
+def test_research_memory_counts_history_and_reports_coverage(monkeypatch, settings, capsys):
+    db = Database(settings.db_path)
+    insert_historical(db, "rank(ts_mean(close, 20))", alpha_id="A1")
+    insert_historical(db, "rank(ts_mean(volume, 60))", alpha_id="A2", status="FAILED",
+                      sharpe=0.3)
+
+    assert run(monkeypatch, settings, ["research", "memory", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    counts = payload["statistics"]["counts"]
+    assert counts["tested"] == 2
+    assert counts["passed"] == 1
+    assert counts["rejected"] == 1
+    assert set(payload["top_values"]["field"]) == {"close", "volume"}
+
+
+def test_research_memory_rejects_unknown_dimension(monkeypatch, settings, capsys):
+    code = run(monkeypatch, settings, ["research", "memory", "--dimension", "khong_co"])
+    assert code == 1
+    assert "Chiều không tồn tại" in capsys.readouterr().err
+
+
+def test_research_next_suggests_a_direction_with_reasons(monkeypatch, settings, capsys):
+    db = Database(settings.db_path)
+    for index in range(30):
+        insert_historical(db, f"rank(ts_rank(returns, {5 + index}))",
+                          alpha_id=f"R{index}", status="FAILED", sharpe=0.2)
+    insert_historical(db, "rank(ts_mean(volume, 20))", alpha_id="V1")
+
+    assert run(monkeypatch, settings, ["research", "next", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload, "Có lịch sử lệch hẳn về một trường thì phải đề xuất được hướng."
+    first = payload[0]
+    assert first["reasons"]
+    # Đề xuất nói về độ phủ, không được hứa hẹn hiệu năng.
+    assert any("không phải dự báo" in reason for reason in first["reasons"])
+    assert first["suggested_experiment"]["variable"]
+
+
+def test_research_next_on_empty_database_says_so(monkeypatch, settings, capsys):
+    assert run(monkeypatch, settings, ["research", "next"]) == 0
+    assert "history scan" in capsys.readouterr().out
+
+
+# ----------------------------------------------------------------------
+# Xem và sinh thí nghiệm
+# ----------------------------------------------------------------------
+def _design_experiment(monkeypatch, settings, capsys):
+    """Dựng dự án, giả thuyết và thí nghiệm rồi trả về mã thí nghiệm."""
+    run(monkeypatch, settings, ["research", "project", "create", "--name", "P"])
+    research_id = json.loads(capsys.readouterr().out)["id"]
+    run(monkeypatch, settings, [
+        "research", "hypothesis", "create", "--research-id", str(research_id),
+        "--statement", "Cửa sổ dài ổn định hơn",
+    ])
+    hypothesis_id = json.loads(capsys.readouterr().out)["id"]
+    run(monkeypatch, settings, [
+        "experiment", "design", "--hypothesis-id", str(hypothesis_id),
+        "--name", "Khảo sát cửa sổ", "--base-expression", "rank(ts_mean(close, {lookback}))",
+        "--variable", "lookback", "--values", "20", "60", "120",
+    ])
+    return json.loads(capsys.readouterr().out)["experiment_id"]
+
+
+def test_experiment_show_reports_design_and_variants(monkeypatch, settings, capsys):
+    experiment_id = _design_experiment(monkeypatch, settings, capsys)
+
+    assert run(monkeypatch, settings, ["experiment", "show", str(experiment_id)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["experiment"]["variable_changed"] == "lookback"
+    assert payload["design"]["values"] == [20, 60, 120]
+    assert len(payload["variants"]) == 3
+    # Chưa chạy sinh thì chưa có alpha nào.
+    assert payload["alphas"] == []
+
+
+def test_experiment_show_unknown_id_returns_error(monkeypatch, settings, capsys):
+    assert run(monkeypatch, settings, ["experiment", "show", "999"]) == 1
+    assert "Không có thí nghiệm" in capsys.readouterr().err
+
+
+def test_experiment_plan_previews_without_queueing(monkeypatch, settings, capsys):
+    experiment_id = _design_experiment(monkeypatch, settings, capsys)
+
+    assert run(monkeypatch, settings, ["experiment", "plan", str(experiment_id), "--json"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["experiment_id"] == experiment_id
+    assert len(plan["seed_expressions"]) == 3
+    # Xem trước không được ghi gì vào hàng đợi, đó là điểm khác với generate.
+    assert Database(settings.db_path).counts_by_status()[Status.PENDING] == 0
+
+
+def test_experiment_generate_queues_the_variants(monkeypatch, settings, capsys):
+    experiment_id = _design_experiment(monkeypatch, settings, capsys)
+
+    assert run(monkeypatch, settings, ["experiment", "generate", str(experiment_id)]) == 0
+    capsys.readouterr()
+    db = Database(settings.db_path)
+    assert db.counts_by_status()[Status.PENDING] == 3
+
+    run(monkeypatch, settings, ["experiment", "show", str(experiment_id)])
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["alphas"]) == 3
+    assert payload["status_counts"][Status.PENDING] == 3
+    # Mỗi alpha phải nối được về đúng biến thể đã sinh ra nó.
+    assert all(row["variant_id"] for row in payload["alphas"])
+
+
+def test_experiment_run_and_generate_are_the_same_command(monkeypatch, settings, capsys):
+    experiment_id = _design_experiment(monkeypatch, settings, capsys)
+
+    run(monkeypatch, settings, ["experiment", "generate", str(experiment_id), "--dry-run"])
+    first = json.loads(capsys.readouterr().out)
+    run(monkeypatch, settings, ["experiment", "run", str(experiment_id), "--dry-run"])
+    second = json.loads(capsys.readouterr().out)
+    assert first == second

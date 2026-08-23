@@ -25,10 +25,10 @@ import statistics
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..history.fingerprint import fingerprint
-from ..storage.db import Database, EvaluationStatus, Status
+from ..storage.db import Database, EvaluationStatus, Status, load_json_dict as _load_json
 
 logger = logging.getLogger(__name__)
 
@@ -63,15 +63,23 @@ SOURCES = (
 
 #: Các chiều nghiên cứu được theo dõi độ phủ.
 DIMENSIONS = (
-    "field", "operator", "lookback", "family", "template",
-    "region", "universe", "delay", "neutralization",
+    "field", "operator", "lookback", "family", "template", "group",
+    "region", "universe", "delay", "neutralization", "strategy",
 )
 
 #: Trạng thái được coi là alpha đạt, gồm cả nhãn của nền tảng lẫn nhãn nội bộ.
 SUCCESS_STATUSES = frozenset({
     "PASSED", "PASS", "ACTIVE", "SUBMITTED", "IS", "CANDIDATE", "HUMAN_REVIEW",
 })
-FAILURE_STATUSES = frozenset({"FAILED", "FAIL", "ERROR", "REJECTED", "REJECT", "INVALID"})
+#: Trạng thái được coi là alpha không đạt. `UNSUBMITTED` và `DECOMMISSIONED`
+#: nằm ở đây để khớp với `history.analyzer`: một alpha đã mô phỏng rồi bị người
+#: nghiên cứu bỏ không nộp là bằng chứng phủ định, không phải bằng chứng thiếu.
+#: Hai mô đun từng phân loại hai nhãn này khác nhau, khiến tỷ lệ đạt của cùng
+#: một tập alpha lệch nhau tùy nơi tính.
+FAILURE_STATUSES = frozenset({
+    "FAILED", "FAIL", "ERROR", "REJECTED", "REJECT", "INVALID",
+    "UNSUBMITTED", "DECOMMISSIONED",
+})
 
 
 def _is_submitted(status: Any) -> bool:
@@ -114,6 +122,11 @@ def _operators_of(row: Dict[str, Any]) -> List[str]:
 
 def _windows_of(row: Dict[str, Any]) -> List[int]:
     return _meta(row)["windows"]
+
+
+def _groups_of(row: Dict[str, Any]) -> List[str]:
+    """Nhóm phân loại dùng trong biểu thức, ví dụ subindustry hay sector."""
+    return _meta(row)["groups"]
 
 
 @dataclass
@@ -357,6 +370,7 @@ class ResearchMemory:
             counters["lookback"].update(
                 str(value) for value in (_int_list(row.get("windows_json")) or _windows_of(row))
             )
+            counters["group"].update(_groups_of(row))
             for dimension, key in (
                 ("family", row.get("family") or row.get("fingerprint")),
                 ("template", row.get("template")),
@@ -364,6 +378,7 @@ class ResearchMemory:
                 ("universe", row.get("universe")),
                 ("delay", row.get("delay")),
                 ("neutralization", row.get("neutralization")),
+                ("strategy", row.get("generation_strategy") or row.get("source_type")),
             ):
                 if key is not None and key != "":
                     counters[dimension][str(key)] += 1
@@ -396,6 +411,62 @@ class ResearchMemory:
 
     def delays_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
         return dict(self.coverage(sources)["delay"])
+
+    def groups_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["group"])
+
+    def strategies_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["strategy"])
+
+    def templates_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["template"])
+
+    # ------------------------------------------------------------------
+    def statistics(self, sources: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+        """Thống kê tổng hợp trên toàn bộ bằng chứng nghiên cứu.
+
+        Đếm theo năm trạng thái riêng biệt thay vì gộp: `tested` là mọi thứ đã
+        sinh ra, còn `simulated` chỉ tính những gì thật sự chạy qua máy chủ. Một
+        alpha không hợp lệ được tính vào `tested` nhưng không vào `simulated`,
+        và phân biệt đó quan trọng khi đánh giá một hướng nghiên cứu có đáng
+        theo tiếp không.
+        """
+        rows = self.load_rows(sources)
+        sharpe = _numbers(rows, "sharpe")
+        fitness = _numbers(rows, "fitness")
+        turnover = _numbers(rows, "turnover")
+
+        counts = {"tested": len(rows), "simulated": 0, "passed": 0,
+                  "rejected": 0, "submitted": 0, "invalid": 0, "unknown": 0}
+        for row in rows:
+            status = str(row.get("status") or "").upper()
+            if status == Status.INVALID:
+                counts["invalid"] += 1
+                continue
+            if _is_submitted(status):
+                counts["submitted"] += 1
+            if status in (Status.PENDING, Status.RUNNING, ""):
+                counts["unknown"] += 1
+                continue
+            counts["simulated"] += 1
+            if _is_successful(status):
+                counts["passed"] += 1
+            elif _is_failed(status):
+                counts["rejected"] += 1
+
+        return {
+            "counts": counts,
+            "sample_size": len(sharpe),
+            "median_sharpe": round(statistics.median(sharpe), 6) if sharpe else None,
+            "median_fitness": round(statistics.median(fitness), 6) if fitness else None,
+            "median_turnover": round(statistics.median(turnover), 6) if turnover else None,
+            "best_sharpe": round(max(sharpe), 6) if sharpe else None,
+            "best_fitness": round(max(fitness), 6) if fitness else None,
+            "coverage_sizes": {
+                dimension: len(counter)
+                for dimension, counter in self.coverage(sources).items()
+            },
+        }
 
     # ------------------------------------------------------------------
     # Trả lời câu hỏi "cái gì đạt, cái gì không"
@@ -736,16 +807,19 @@ class ResearchMemory:
         }
 
 
-def _load_json(raw: Any) -> Dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if not raw:
-        return {}
-    try:
-        value = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
+def _numbers(rows: Sequence[Dict[str, Any]], key: str) -> List[float]:
+    values = []
+    for row in rows:
+        value = row.get(key)
+        if value is None:
+            continue
+        try:
+            values.append(abs(float(value)))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
 
 
 def _str_list(raw: Any) -> List[str]:
