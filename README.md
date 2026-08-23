@@ -269,6 +269,26 @@ Bảy màn hình, mỗi màn hình chỉ nạp dữ liệu khi được mở l�
 | Phả hệ alpha | alpha này sinh ra từ đâu, tra bằng mã cục bộ hoặc mã nền tảng |
 | Alpha lịch sử | đã nộp gì trên BRAIN, dự án nghiên cứu, tương quan |
 
+### Giao diện Streamlit (tùy chọn)
+
+Một cách khác để dùng hệ thống mà không cần nhớ cú pháp dòng lệnh. Nằm ở `streamlit_app/`, tách hẳn khỏi gói `alphaforge` — mọi khối trong đó chỉ gọi thẳng các lớp đã có (`Database`, `ResearchMemory`, `EvaluationPipeline`, `BrainClient`...), không viết lại logic nào, nên không bao giờ ứng xử khác dòng lệnh.
+
+```bash
+pip install -e ".[ui]"
+streamlit run streamlit_app/Home.py
+```
+
+Hai trang:
+
+| Trang | Cần đăng nhập | Có thể làm gì |
+| --- | --- | --- |
+| 📊 Theo dõi | Không | Xem cả bảy màn hình ở trên. Chỉ đọc SQLite, không có nút hành động nào. |
+| 🎛️ Điều khiển | Có, cho các bước gọi BRAIN | Sinh alpha (không cần đăng nhập), chạy mô phỏng, thẩm định cục bộ, kiểm tra tương quan, đưa lên ứng viên, ghi nhận đã nộp. |
+
+Thông tin đăng nhập nhập ở trang Điều khiển chỉ sống trong `st.session_state` — bộ nhớ của phiên trình duyệt đó — không bao giờ ghi xuống đĩa hay lẫn vào tệp cấu hình. Hệ thống vẫn **không nộp thay**: nút "Đánh dấu đã nộp" chỉ ghi chép, giống hệt `alpha mark-submitted`.
+
+Bước "Chạy mô phỏng" gọi `SimulationRunner.run()`, một vòng lặp đồng bộ — trang sẽ khoá lại tới khi chạy xong, nên chạy lô nhỏ (10-30 alpha) mỗi lượt thay vì hàng nghìn.
+
 ### Mô hình ngôn ngữ (tùy chọn)
 
 ```bash

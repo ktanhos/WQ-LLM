@@ -22,6 +22,9 @@ dev = ["pytest>=7.4", "httpx>=0.27"]
 # Mô hình ngôn ngữ là tùy chọn. Không cài nhóm này thì toàn bộ quy trình
 # nghiên cứu vẫn chạy đầy đủ, chỉ thiếu phần diễn giải bằng văn xuôi.
 llm = ["anthropic>=0.39"]
+# Giao diện Streamlit là tùy chọn, thay thế cho dòng lệnh. Không cài nhóm này
+# thì `alphaforge` vẫn dùng được đầy đủ qua CLI và bảng theo dõi FastAPI.
+ui = ["streamlit>=1.32", "pandas>=2.0"]
 
 [project.scripts]
 alphaforge = "alphaforge.cli:main"
