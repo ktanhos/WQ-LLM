@@ -87,7 +87,15 @@ class AlphaLineage:
     #: Hạt giống của lô sinh, cần để tái lập chính xác biểu thức.
     generation_seed: Optional[int] = None
     mutation_type: str = ""
-    #: Nguồn gốc alpha, ví dụ generator, historical hoặc manual. Alpha sinh ra
-    #: từ một alpha lịch sử cũng phải ghi lại phả hệ.
+    #: Cách alpha ra đời: template, pairwise, mutate, historical hoặc manual.
     source: str = ""
+    #: Alpha gốc khi biểu thức được biến đổi từ một alpha đã có. Khác
+    #: parent_alpha_id ở chỗ cha có thể là alpha nội bộ, còn nguồn có thể là
+    #: một alpha lịch sử nhập từ nền tảng.
+    source_alpha_id: Optional[str] = None
     created_at: str = field(default_factory=utc_now)
+
+    @property
+    def source_type(self) -> str:
+        """Tên gọi khác của `source`, khớp với thuật ngữ trong tài liệu."""
+        return self.source

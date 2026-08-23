@@ -45,13 +45,41 @@ class Status:
     PASSED = "PASSED"
     REJECTED = "REJECTED"
     FAILED = "FAILED"
+    #: Biểu thức không qua được kiểm tra cục bộ nên chưa từng tốn hạn mức mô phỏng.
+    INVALID = "INVALID"
+    #: Đã qua chấm điểm, độ bền và tương quan. Vẫn chưa nộp.
+    CANDIDATE = "CANDIDATE"
+    #: Người nghiên cứu đang xem xét. Chỉ người mới chuyển tiếp được.
+    HUMAN_REVIEW = "HUMAN_REVIEW"
     SUBMITTED = "SUBMITTED"
 
     ALL = (
-        PENDING, RUNNING, SIMULATED, PASSED, REJECTED, FAILED, SUBMITTED,
+        PENDING, RUNNING, SIMULATED, PASSED, REJECTED, FAILED, INVALID,
+        CANDIDATE, HUMAN_REVIEW, SUBMITTED,
     )
     #: Trạng thái đã có kết luận, không quay lại hàng đợi.
-    TERMINAL = (PASSED, REJECTED, FAILED, SUBMITTED)
+    TERMINAL = (PASSED, REJECTED, FAILED, INVALID, CANDIDATE, HUMAN_REVIEW, SUBMITTED)
+
+
+class EvaluationStatus:
+    """Bậc thang thẩm định, chi tiết hơn trạng thái hàng đợi.
+
+    Tách khỏi `Status` vì hai thứ trả lời hai câu hỏi khác nhau: `Status` cho
+    biết bản ghi đang ở đâu trong hàng đợi mô phỏng, còn `EvaluationStatus` cho
+    biết nó đã vượt qua bao nhiêu bước thẩm định. Một alpha có thể `PASSED` ở
+    hàng đợi nhưng mới chỉ `SCORED` ở thang thẩm định.
+    """
+
+    NONE = ""
+    SCORED = "SCORED"
+    ROBUST = "ROBUST"
+    ROBUST_FAILED = "ROBUST_FAILED"
+    CORRELATION_PASS = "CORRELATION_PASS"
+    CORRELATION_FAILED = "CORRELATION_FAILED"
+    CANDIDATE = "CANDIDATE"
+
+    #: Thứ tự các bước. Dùng để biết bước nào tốn tài nguyên hơn bước nào.
+    LADDER = (SCORED, ROBUST, CORRELATION_PASS, CANDIDATE)
 
 
 @dataclass
@@ -77,8 +105,18 @@ class AlphaRecord:
     generation_strategy: str = ""
     #: Hạt giống ngẫu nhiên của lô sinh. Không có nó thì không tái lập được lô.
     generation_seed: Optional[int] = None
+    #: Cách alpha ra đời: template, pairwise, mutate, historical hoặc manual.
+    source_type: str = ""
+    #: Alpha gốc khi biểu thức được biến đổi từ một alpha đã có.
+    source_alpha_id: Optional[str] = None
+    plan_id: Optional[int] = None
+    evaluation_status: str = ""
+    rank: Optional[int] = None
+    robustness: Dict[str, Any] = field(default_factory=dict)
+    validation_error: Optional[str] = None
     fingerprint: Optional[str] = None
     family: Optional[str] = None
+    template: Optional[str] = None
 
 
 def expression_hash(expression: str, settings: Optional[Dict[str, Any]] = None) -> str:
@@ -125,8 +163,16 @@ CREATE TABLE IF NOT EXISTS alphas (
     parent_alpha_id TEXT,
     generation_strategy TEXT NOT NULL DEFAULT '',
     generation_seed INTEGER,
+    source_type TEXT NOT NULL DEFAULT '',
+    source_alpha_id TEXT,
+    plan_id INTEGER,
+    evaluation_status TEXT NOT NULL DEFAULT '',
+    rank INTEGER,
+    robustness_json TEXT NOT NULL DEFAULT '{}',
+    validation_error TEXT,
     fingerprint TEXT,
     family TEXT,
+    template TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -186,6 +232,36 @@ CREATE TABLE IF NOT EXISTS historical_alphas (
     imported_at TEXT NOT NULL
 );
 
+
+CREATE TABLE IF NOT EXISTS correlation_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alpha_row_id INTEGER NOT NULL REFERENCES alphas(id) ON DELETE CASCADE,
+    alpha_id TEXT,
+    correlation_type TEXT NOT NULL,
+    correlation_value REAL,
+    reference_alpha TEXT,
+    threshold REAL,
+    status TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS generation_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    research_id INTEGER REFERENCES research_projects(id) ON DELETE SET NULL,
+    hypothesis_id INTEGER REFERENCES hypotheses(id) ON DELETE SET NULL,
+    experiment_id INTEGER REFERENCES experiments(id) ON DELETE SET NULL,
+    strategy TEXT NOT NULL DEFAULT 'template',
+    data_fields_json TEXT NOT NULL DEFAULT '[]',
+    operators_json TEXT NOT NULL DEFAULT '[]',
+    lookbacks_json TEXT NOT NULL DEFAULT '[]',
+    templates_json TEXT NOT NULL DEFAULT '[]',
+    constraints_json TEXT NOT NULL DEFAULT '{}',
+    settings_json TEXT NOT NULL DEFAULT '{}',
+    max_candidates INTEGER NOT NULL DEFAULT 100,
+    seed INTEGER,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS research_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -252,6 +328,7 @@ CREATE TABLE IF NOT EXISTS alpha_lineage (
     generation_seed INTEGER,
     mutation_type TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT '',
+    source_alpha_id TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -274,6 +351,10 @@ CREATE INDEX IF NOT EXISTS idx_hypotheses_research ON hypotheses(research_id);
 CREATE INDEX IF NOT EXISTS idx_experiments_hypothesis ON experiments(hypothesis_id);
 CREATE INDEX IF NOT EXISTS idx_variants_experiment ON experiment_variants(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_lineage_parent ON alpha_lineage(parent_alpha_id);
+CREATE INDEX IF NOT EXISTS idx_alphas_experiment ON alphas(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_alphas_evaluation ON alphas(evaluation_status);
+CREATE INDEX IF NOT EXISTS idx_correlation_alpha ON correlation_results(alpha_row_id);
+CREATE INDEX IF NOT EXISTS idx_plans_experiment ON generation_plans(experiment_id);
 """
 
 #: Từ khóa mở đầu một ràng buộc bảng, không phải một cột.
@@ -328,10 +409,15 @@ _ALPHA_COLUMNS = {
     "expression", "status", "attempts", "alpha_id", "score", "self_correlation",
     "prod_correlation", "reject_reason", "error", "run_id", "experiment_id",
     "variant_id", "parent_alpha_id", "generation_strategy", "generation_seed",
-    "fingerprint", "family",
+    "source_type", "source_alpha_id", "plan_id", "evaluation_status", "rank",
+    "validation_error", "fingerprint", "family", "template",
 }
 #: Cột lưu dưới dạng JSON, nhận vào là đối tượng Python.
-_ALPHA_JSON_COLUMNS = {"settings": "settings_json", "metrics": "metrics_json"}
+_ALPHA_JSON_COLUMNS = {
+    "settings": "settings_json",
+    "metrics": "metrics_json",
+    "robustness": "robustness_json",
+}
 
 
 class Database:
@@ -740,8 +826,16 @@ def _to_record(row: sqlite3.Row) -> AlphaRecord:
         parent_alpha_id=row["parent_alpha_id"],
         generation_strategy=str(row["generation_strategy"] or ""),
         generation_seed=row["generation_seed"],
+        source_type=str(row["source_type"] or ""),
+        source_alpha_id=row["source_alpha_id"],
+        plan_id=row["plan_id"],
+        evaluation_status=str(row["evaluation_status"] or ""),
+        rank=row["rank"],
+        robustness=_load_json(row["robustness_json"]),
+        validation_error=row["validation_error"],
         fingerprint=row["fingerprint"],
         family=row["family"],
+        template=row["template"],
     )
 
 

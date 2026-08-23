@@ -298,3 +298,54 @@ def test_foreign_keys_are_enforced(db):
             )
     finally:
         connection.close()
+
+
+# ----------------------------------------------------------------------
+# Bất biến: số placeholder phải khớp số tham số trong mọi lệnh INSERT
+# ----------------------------------------------------------------------
+def test_every_insert_binds_the_right_number_of_values():
+    """Bắt cả lớp lỗi lệch placeholder thay vì từng trường hợp một.
+
+    Lỗi này đã xảy ra hai lần khi thêm cột mới: câu lệnh SQL được cập nhật
+    nhưng tuple giá trị thì không. Nó chỉ lộ ra lúc chạy, và chỉ ở đúng nhánh
+    mã gọi tới câu lệnh đó.
+    """
+    import sqlite3
+
+    from alphaforge.storage.db import SCHEMA, INDEXES
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.executescript(SCHEMA)
+        connection.executescript(INDEXES)
+        offenders = []
+        for path in (REPO / "alphaforge").rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                # Tìm lời gọi execute(sql, params) có SQL là hằng chuỗi và
+                # params là tuple hằng, tức là đếm được tĩnh.
+                if not isinstance(node, ast.Call):
+                    continue
+                if getattr(node.func, "attr", "") != "execute" or len(node.args) != 2:
+                    continue
+                sql_node, params_node = node.args
+                if not isinstance(sql_node, ast.Constant) or not isinstance(sql_node.value, str):
+                    continue
+                if not isinstance(params_node, (ast.Tuple, ast.List)):
+                    continue
+                sql = sql_node.value
+                if "INSERT" not in sql.upper():
+                    continue
+                # Bỏ qua tuple có phần tử mở rộng, không đếm tĩnh được.
+                if any(isinstance(element, ast.Starred) for element in params_node.elts):
+                    continue
+                placeholders = sql.count("?")
+                supplied = len(params_node.elts)
+                if placeholders != supplied:
+                    offenders.append(
+                        f"{path.relative_to(REPO)}:{node.lineno} "
+                        f"{placeholders} dấu hỏi nhưng {supplied} giá trị"
+                    )
+        assert offenders == [], "Lệch placeholder: " + "; ".join(offenders)
+    finally:
+        connection.close()

@@ -22,12 +22,13 @@ from __future__ import annotations
 import json
 import logging
 import statistics
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from ..history.fingerprint import fingerprint
-from ..storage.db import Database
+from ..storage.db import Database, EvaluationStatus, Status
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,71 @@ MAX_WEIGHT = 2.5
 #: Số alpha coi là đã khai thác hết một họ cấu trúc, dùng để quy mức bão hòa
 #: về thang 0..1.
 SATURATION_REFERENCE = 50
+
+#: Nhãn nguồn của một bằng chứng nghiên cứu.
+SOURCE_HISTORICAL = "historical"
+SOURCE_CURRENT = "current"
+SOURCE_EXPERIMENT = "experiment"
+SOURCE_SUBMITTED = "submitted"
+SOURCE_SIMULATION = "simulation"
+SOURCES = (
+    SOURCE_HISTORICAL, SOURCE_CURRENT, SOURCE_EXPERIMENT,
+    SOURCE_SUBMITTED, SOURCE_SIMULATION,
+)
+
+#: Các chiều nghiên cứu được theo dõi độ phủ.
+DIMENSIONS = (
+    "field", "operator", "lookback", "family", "template",
+    "region", "universe", "delay", "neutralization",
+)
+
+#: Trạng thái được coi là alpha đạt, gồm cả nhãn của nền tảng lẫn nhãn nội bộ.
+SUCCESS_STATUSES = frozenset({
+    "PASSED", "PASS", "ACTIVE", "SUBMITTED", "IS", "CANDIDATE", "HUMAN_REVIEW",
+})
+FAILURE_STATUSES = frozenset({"FAILED", "FAIL", "ERROR", "REJECTED", "REJECT", "INVALID"})
+
+
+def _is_submitted(status: Any) -> bool:
+    return str(status or "").upper() in {"SUBMITTED", "ACTIVE", "IS"}
+
+
+def _is_successful(status: Any) -> bool:
+    return str(status or "").upper() in SUCCESS_STATUSES
+
+
+def _is_failed(status: Any) -> bool:
+    return str(status or "").upper() in FAILURE_STATUSES
+
+
+def _classify_local(row: Dict[str, Any]) -> str:
+    """Xếp nhãn nguồn cho một bản ghi trong bảng alphas."""
+    status = str(row.get("status") or "").upper()
+    if status == Status.SUBMITTED:
+        return SOURCE_SUBMITTED
+    if row.get("experiment_id"):
+        return SOURCE_EXPERIMENT
+    if status in (Status.PENDING, Status.RUNNING, Status.INVALID):
+        return SOURCE_CURRENT
+    return SOURCE_SIMULATION
+
+
+def _meta(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Vân tay tính lại từ biểu thức khi bản ghi chưa có sẵn thành phần."""
+    expression = row.get("expression")
+    return fingerprint(expression) if expression else fingerprint("")
+
+
+def _fields_of(row: Dict[str, Any]) -> List[str]:
+    return _meta(row)["fields"]
+
+
+def _operators_of(row: Dict[str, Any]) -> List[str]:
+    return _meta(row)["operators"]
+
+
+def _windows_of(row: Dict[str, Any]) -> List[int]:
+    return _meta(row)["windows"]
 
 
 @dataclass
@@ -201,41 +267,260 @@ class ResearchMemory:
         self.db = db if isinstance(db, Database) else Database(db)
 
     # ------------------------------------------------------------------
-    def load_rows(self) -> List[Dict[str, Any]]:
-        """Gộp alpha lịch sử đã nộp với alpha do hệ thống tự sinh.
+    def load_rows(self, sources: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+        """Gộp mọi bằng chứng nghiên cứu về một dạng bản ghi thống nhất.
 
-        Cả hai đều là bằng chứng về việc một cấu trúc đã được thử. Bỏ qua một
-        trong hai sẽ đánh giá thấp mức độ bão hòa của họ cấu trúc đó.
+        Alpha đã nộp trên nền tảng và alpha do hệ thống tự sinh đều là bằng
+        chứng rằng một cấu trúc đã được thử. Bỏ qua một trong hai sẽ đánh giá
+        thấp mức độ bão hòa của họ cấu trúc đó.
+
+        Mỗi bản ghi mang một nhãn `source` để nơi gọi phân biệt được nguồn gốc:
+
+            historical   nhập về từ lịch sử nộp trên nền tảng
+            simulation   hệ thống đã mô phỏng, chưa gắn với thí nghiệm nào
+            experiment   sinh ra trong khuôn khổ một thí nghiệm
+            submitted    đã nộp, dù đến từ nguồn nào
+            current      đang trong hàng đợi, chưa có kết quả
+
+        Tham số `sources` lọc theo nhãn đó. Bỏ trống thì lấy tất cả.
         """
+        wanted = set(sources) if sources else None
         rows: List[Dict[str, Any]] = []
         connection = self.db.connect()
         try:
             for row in connection.execute(
                 """
-                SELECT family, fingerprint, expression, status, sharpe,
-                       fields_json, operators_json, windows_json
+                SELECT alpha_id, family, fingerprint, template, expression, status,
+                       sharpe, fitness, turnover, region, universe, delay,
+                       neutralization, submitted, fields_json, operators_json,
+                       windows_json
                   FROM historical_alphas
                 """
             ).fetchall():
                 item = dict(row)
+                item["source"] = (
+                    SOURCE_SUBMITTED
+                    if _is_submitted(item.get("status"))
+                    else SOURCE_HISTORICAL
+                )
+                # Giữ khóa cũ để mã đã viết trước đây không phải sửa.
                 item["origin"] = "historical"
                 rows.append(item)
 
             for row in connection.execute(
                 """
-                SELECT family, fingerprint, expression, status, score, metrics_json
+                SELECT id, alpha_id, family, fingerprint, template, expression,
+                       status, evaluation_status, score, metrics_json, settings_json,
+                       experiment_id, variant_id, plan_id, source_type,
+                       self_correlation, prod_correlation, reject_reason
                   FROM alphas
-                 WHERE status IN ('SIMULATED', 'PASSED', 'REJECTED', 'SUBMITTED')
                 """
             ).fetchall():
                 item = dict(row)
                 metrics = _load_json(item.pop("metrics_json", "{}"))
+                settings = _load_json(item.pop("settings_json", "{}"))
                 item["sharpe"] = metrics.get("sharpe")
+                item["fitness"] = metrics.get("fitness")
+                item["turnover"] = metrics.get("turnover")
+                item["region"] = settings.get("region")
+                item["universe"] = settings.get("universe")
+                item["delay"] = settings.get("delay")
+                item["neutralization"] = settings.get("neutralization")
+                item["metrics"] = metrics
+                item["source"] = _classify_local(item)
                 item["origin"] = "generated"
                 rows.append(item)
         finally:
             connection.close()
+
+        if wanted is not None:
+            rows = [row for row in rows if row["source"] in wanted]
         return rows
+
+    # ------------------------------------------------------------------
+    # Trả lời câu hỏi "cái gì đã được nghiên cứu"
+    # ------------------------------------------------------------------
+    def coverage(self, sources: Optional[Sequence[str]] = None) -> Dict[str, Counter]:
+        """Đếm số alpha theo từng chiều nghiên cứu.
+
+        Một bản ghi có thể đóng góp vào nhiều khóa của cùng một chiều, ví dụ
+        biểu thức dùng hai trường dữ liệu.
+        """
+        counters: Dict[str, Counter] = {
+            dimension: Counter() for dimension in DIMENSIONS
+        }
+        for row in self.load_rows(sources):
+            counters["field"].update(_str_list(row.get("fields_json")) or _fields_of(row))
+            counters["operator"].update(
+                _str_list(row.get("operators_json")) or _operators_of(row)
+            )
+            counters["lookback"].update(
+                str(value) for value in (_int_list(row.get("windows_json")) or _windows_of(row))
+            )
+            for dimension, key in (
+                ("family", row.get("family") or row.get("fingerprint")),
+                ("template", row.get("template")),
+                ("region", row.get("region")),
+                ("universe", row.get("universe")),
+                ("delay", row.get("delay")),
+                ("neutralization", row.get("neutralization")),
+            ):
+                if key is not None and key != "":
+                    counters[dimension][str(key)] += 1
+        return counters
+
+    def fields_researched(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["field"])
+
+    def operators_researched(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["operator"])
+
+    def families_researched(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["family"])
+
+    def structures_researched(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        """Đếm theo template, tức cấu trúc đã bỏ qua tên trường dữ liệu."""
+        return dict(self.coverage(sources)["template"])
+
+    def lookbacks_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["lookback"])
+
+    def regions_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["region"])
+
+    def universes_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["universe"])
+
+    def neutralizations_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["neutralization"])
+
+    def delays_tried(self, sources: Optional[Sequence[str]] = None) -> Dict[str, int]:
+        return dict(self.coverage(sources)["delay"])
+
+    # ------------------------------------------------------------------
+    # Trả lời câu hỏi "cái gì đạt, cái gì không"
+    # ------------------------------------------------------------------
+    def successful_alphas(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Alpha đạt ngưỡng, xếp theo Sharpe tuyệt đối giảm dần."""
+        rows = [
+            row for row in self.load_rows()
+            if _is_successful(row.get("status")) and row.get("sharpe") is not None
+        ]
+        rows.sort(key=lambda row: abs(float(row["sharpe"])), reverse=True)
+        return rows[:limit]
+
+    def failed_alphas(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Alpha thất bại. Vẫn là thông tin nghiên cứu, không phải rác."""
+        rows = [row for row in self.load_rows() if _is_failed(row.get("status"))]
+        return rows[:limit]
+
+    def correlation_rejected(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Alpha bị loại riêng vì tương quan, không phải vì chỉ số kém.
+
+        Phân biệt hai nhóm này quan trọng: alpha bị loại vì tương quan nghĩa là
+        ý tưởng đúng nhưng đã có người khai thác, còn alpha chỉ số kém nghĩa là
+        ý tưởng chưa hiệu quả. Hai kết luận nghiên cứu hoàn toàn khác nhau.
+        """
+        connection = self.db.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT id, alpha_id, expression, family, self_correlation,
+                       prod_correlation, reject_reason, evaluation_status
+                  FROM alphas
+                 WHERE evaluation_status = ?
+                    OR (reject_reason IS NOT NULL AND reject_reason LIKE '%tương quan%')
+                 ORDER BY ABS(COALESCE(self_correlation, 0)) DESC
+                 LIMIT ?
+                """,
+                (EvaluationStatus.CORRELATION_FAILED, int(limit)),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            connection.close()
+
+    def submitted_alphas(self, limit: int = 100) -> List[Dict[str, Any]]:
+        return self.load_rows([SOURCE_SUBMITTED])[:limit]
+
+    def candidates(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Alpha đã qua mọi bước tự động và đang chờ người quyết định."""
+        connection = self.db.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT id, alpha_id, expression, score, metrics_json, family,
+                       experiment_id, evaluation_status, status
+                  FROM alphas
+                 WHERE status IN (?, ?) OR evaluation_status = ?
+                 ORDER BY COALESCE(score, 0) DESC
+                 LIMIT ?
+                """,
+                (Status.CANDIDATE, Status.HUMAN_REVIEW, EvaluationStatus.CANDIDATE,
+                 int(limit)),
+            ).fetchall()
+            items = []
+            for row in rows:
+                item = dict(row)
+                item["metrics"] = _load_json(item.pop("metrics_json", "{}"))
+                items.append(item)
+            return items
+        finally:
+            connection.close()
+
+    # ------------------------------------------------------------------
+    def experiment_outcome(self, experiment_id: int) -> Dict[str, Any]:
+        """Kết quả tổng hợp của một thí nghiệm.
+
+        Đây là đường phản hồi từ kết quả mô phỏng quay lại trí nhớ nghiên cứu:
+        sau khi chạy xong, hệ thống biết thí nghiệm đó sinh ra bao nhiêu alpha,
+        bao nhiêu đạt, bao nhiêu bền và bao nhiêu thành ứng viên.
+        """
+        connection = self.db.connect()
+        try:
+            rows = [
+                dict(row) for row in connection.execute(
+                    """
+                    SELECT status, evaluation_status, score, metrics_json, expression
+                      FROM alphas WHERE experiment_id = ?
+                    """,
+                    (int(experiment_id),),
+                ).fetchall()
+            ]
+        finally:
+            connection.close()
+
+        sharpes = []
+        for row in rows:
+            metrics = _load_json(row.get("metrics_json"))
+            value = metrics.get("sharpe")
+            if value is None:
+                continue
+            try:
+                sharpes.append(abs(float(value)))
+            except (TypeError, ValueError):
+                continue
+
+        statuses = Counter(str(row.get("status") or "") for row in rows)
+        evaluations = Counter(str(row.get("evaluation_status") or "") for row in rows)
+        total = len(rows)
+        passed = statuses.get(Status.PASSED, 0) + statuses.get(Status.CANDIDATE, 0)
+        return {
+            "experiment_id": int(experiment_id),
+            "total": total,
+            "simulated": total - statuses.get(Status.PENDING, 0) - statuses.get(Status.INVALID, 0),
+            "invalid": statuses.get(Status.INVALID, 0),
+            "passed": passed,
+            "rejected": statuses.get(Status.REJECTED, 0),
+            "failed": statuses.get(Status.FAILED, 0),
+            "robust": evaluations.get(EvaluationStatus.ROBUST, 0)
+            + evaluations.get(EvaluationStatus.CORRELATION_PASS, 0)
+            + evaluations.get(EvaluationStatus.CANDIDATE, 0),
+            "candidates": evaluations.get(EvaluationStatus.CANDIDATE, 0),
+            "pass_rate": round(passed / total, 4) if total else 0.0,
+            "median_sharpe": round(statistics.median(sharpes), 6) if sharpes else None,
+            "best_sharpe": round(max(sharpes), 6) if sharpes else None,
+            "sample_size": len(sharpes),
+        }
 
     # ------------------------------------------------------------------
     def profiles(self) -> Dict[str, ResearchProfile]:
