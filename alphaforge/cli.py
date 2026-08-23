@@ -325,6 +325,7 @@ def cmd_generate(settings: Settings, args: argparse.Namespace) -> int:
     added = db.add_alphas(
         expressions, sim, run_id=run_id,
         generation_strategy=args.strategy,
+        generation_seed=args.seed,
         fingerprints=fingerprints,
     )
     print(

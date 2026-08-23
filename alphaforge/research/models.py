@@ -84,6 +84,8 @@ class AlphaLineage:
     experiment_id: Optional[int] = None
     variant_id: Optional[int] = None
     generation_strategy: str = ""
+    #: Hạt giống của lô sinh, cần để tái lập chính xác biểu thức.
+    generation_seed: Optional[int] = None
     mutation_type: str = ""
     #: Nguồn gốc alpha, ví dụ generator, historical hoặc manual. Alpha sinh ra
     #: từ một alpha lịch sử cũng phải ghi lại phả hệ.

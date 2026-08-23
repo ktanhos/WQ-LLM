@@ -31,12 +31,23 @@ from ..storage.db import Database
 
 logger = logging.getLogger(__name__)
 
+
+def _dampen(weight: float, factor: float) -> float:
+    """Kéo một trọng số về gần 1 theo hệ số cho trước.
+
+    factor = 1 giữ nguyên, factor = 0 vô hiệu hóa hoàn toàn.
+    """
+    return round(1.0 + (weight - 1.0) * factor, 4)
+
 #: Số alpha tối thiểu để lịch sử của một họ được coi là có ý nghĩa thống kê.
 MIN_SAMPLE = 8
 #: Trọng số thấp nhất. Không bao giờ bằng 0 để không khóa cứng không gian tìm kiếm.
 MIN_WEIGHT = 0.15
 #: Trọng số cao nhất, chặn để một họ may mắn không chiếm toàn bộ lô sinh.
 MAX_WEIGHT = 2.5
+#: Số alpha coi là đã khai thác hết một họ cấu trúc, dùng để quy mức bão hòa
+#: về thang 0..1.
+SATURATION_REFERENCE = 50
 
 
 @dataclass
@@ -57,6 +68,23 @@ class ResearchProfile:
         return self.passed / self.count if self.count else 0.0
 
     @property
+    def saturation(self) -> float:
+        """Mức bão hòa từ 0 tới 1.
+
+        Kết hợp hai yếu tố: đã thử bao nhiêu lần, và thu được bao nhiêu. Thử
+        nhiều mà tỷ lệ đạt thấp thì bão hòa cao. Thử nhiều mà vẫn ra alpha đạt
+        đều thì không coi là bão hòa, vì hướng đó vẫn đang sinh lợi.
+
+        Trả về số thay vì cờ đúng sai để nơi gọi tự chọn ngưỡng, và để so sánh
+        được mức độ giữa hai họ cùng vượt ngưỡng.
+        """
+        if not self.count:
+            return 0.0
+        # Cỡ mẫu quy về thang 0..1, bão hòa hoàn toàn ở mốc SATURATION_REFERENCE.
+        effort = min(1.0, self.count / SATURATION_REFERENCE)
+        return round(effort * (1.0 - self.pass_rate), 4)
+
+    @property
     def is_saturated(self) -> bool:
         """Đã thử nhiều mà chưa ra kết quả nào đạt."""
         return self.count >= MIN_SAMPLE and self.passed == 0
@@ -64,6 +92,14 @@ class ResearchProfile:
     @property
     def is_underexplored(self) -> bool:
         return self.count < MIN_SAMPLE
+
+    @property
+    def confidence(self) -> float:
+        """Mức tin cậy của kết luận, dựa trên cỡ mẫu.
+
+        Dùng để không kết luận mạnh từ nhóm quá ít quan sát.
+        """
+        return round(min(1.0, self.count / (MIN_SAMPLE * 4)), 4)
 
 
 @dataclass
@@ -81,14 +117,76 @@ class GenerationContext:
     seen_exact: set = field(default_factory=set)
     #: Cửa sổ thời gian đã thử theo từng họ, để tránh lặp lại tham số cũ.
     tested_windows: Dict[str, List[int]] = field(default_factory=dict)
+    #: Trường dữ liệu và toán tử đã thử theo từng họ.
+    tested_fields: Dict[str, List[str]] = field(default_factory=dict)
+    tested_operators: Dict[str, List[str]] = field(default_factory=dict)
+    #: Mức bão hòa và độ ưu tiên nghiên cứu theo họ, thang 0..1.
+    family_saturation: Dict[str, float] = field(default_factory=dict)
+    family_priority: Dict[str, float] = field(default_factory=dict)
     enabled: bool = True
 
+    #: Trọng số ở hai mức trừu tượng rộng hơn family.
+    template_weights: Dict[str, float] = field(default_factory=dict)
+    field_weights: Dict[str, float] = field(default_factory=dict)
+
+    #: Hệ số làm nhẹ khi phải suy ra từ mức rộng hơn. Bằng chứng ở mức template
+    #: hay mức trường yếu hơn bằng chứng ở đúng họ cấu trúc, nên hình phạt phải
+    #: nhẹ hơn tương ứng.
+    TEMPLATE_DAMPING = 0.5
+    FIELD_DAMPING = 0.3
+
     def weight_for(self, expression: str) -> float:
-        """Trọng số của một biểu thức ứng viên."""
-        if not self.enabled or not self.family_weights:
+        """Trọng số của một biểu thức ứng viên.
+
+        Tra theo ba mức, dừng ở mức hẹp nhất có dữ liệu:
+
+            family    đã thử đúng cấu trúc này với đúng trường này
+            template  đã thử cấu trúc này với trường khác
+            field     đã khai thác trường này ở cấu trúc khác
+
+        Không có mức nào khớp thì trả về 1, tức là không can thiệp. Nhờ cách
+        tra dần này, một biểu thức có cấu trúc mới nhưng dùng lại trường đã
+        khai thác kiệt vẫn bị hạ ưu tiên nhẹ, thay vì thoát hoàn toàn.
+        """
+        if not self.enabled:
             return 1.0
         meta = fingerprint(expression)
-        return self.family_weights.get(meta["family"], 1.0)
+
+        weight = self.family_weights.get(meta["family"])
+        if weight is not None:
+            return weight
+
+        weight = self.template_weights.get(meta["template"])
+        if weight is not None:
+            return _dampen(weight, self.TEMPLATE_DAMPING)
+
+        if meta["fields"]:
+            known = [
+                self.field_weights[name]
+                for name in meta["fields"]
+                if name in self.field_weights
+            ]
+            if known:
+                # Lấy mức phạt nặng nhất trong các trường xuất hiện.
+                return _dampen(min(known), self.FIELD_DAMPING)
+        return 1.0
+
+    def saturation_for(self, expression: str) -> float:
+        """Mức bão hòa của họ chứa biểu thức. Chưa từng thử thì bằng 0."""
+        if not self.enabled:
+            return 0.0
+        return self.family_saturation.get(fingerprint(expression)["family"], 0.0)
+
+    def priority_for(self, expression: str) -> float:
+        """Độ ưu tiên nghiên cứu. Họ chưa thử được coi là đáng khảo sát nhất."""
+        if not self.enabled:
+            return 1.0
+        return self.family_priority.get(fingerprint(expression)["family"], 1.0)
+
+    def has_tried_field(self, expression: str, field_name: str) -> bool:
+        """Trường dữ liệu này đã được thử trong họ cấu trúc đó chưa."""
+        family = fingerprint(expression)["family"]
+        return field_name in self.tested_fields.get(family, ())
 
     def is_duplicate(self, expression: str) -> bool:
         if not self.enabled or not self.seen_exact:
@@ -189,6 +287,42 @@ class ResearchMemory:
         return result
 
     # ------------------------------------------------------------------
+    def _weights_by(
+        self, key_of, *, target_sharpe: float
+    ) -> Dict[str, float]:
+        """Tính trọng số cho một cách gom nhóm bất kỳ.
+
+        `key_of` nhận một hàng và trả về danh sách khóa mà hàng đó thuộc về.
+        Một hàng có thể thuộc nhiều khóa, ví dụ biểu thức hai trường dữ liệu.
+        """
+        buckets: Dict[str, List[Dict[str, Any]]] = {}
+        for row in self.load_rows():
+            for key in key_of(row):
+                if key:
+                    buckets.setdefault(str(key), []).append(row)
+
+        weights: Dict[str, float] = {}
+        for key, group in buckets.items():
+            if len(group) < MIN_SAMPLE:
+                continue
+            sharpes = []
+            for row in group:
+                value = row.get("sharpe")
+                if value is None:
+                    continue
+                try:
+                    sharpes.append(abs(float(value)))
+                except (TypeError, ValueError):
+                    continue
+            if not sharpes:
+                continue
+            median = statistics.median(sharpes)
+            ratio = median / target_sharpe if target_sharpe else 1.0
+            confidence = min(1.0, len(group) / (MIN_SAMPLE * 4))
+            weight = 1.0 + (ratio - 1.0) * confidence
+            weights[key] = round(max(MIN_WEIGHT, min(MAX_WEIGHT, weight)), 4)
+        return weights
+
     def build_context(
         self,
         *,
@@ -207,9 +341,18 @@ class ResearchMemory:
         profiles = self.profiles()
         weights: Dict[str, float] = {}
         tested_windows: Dict[str, List[int]] = {}
+        tested_fields: Dict[str, List[str]] = {}
+        tested_operators: Dict[str, List[str]] = {}
+        saturation: Dict[str, float] = {}
+        priority: Dict[str, float] = {}
 
         for family, profile in profiles.items():
             tested_windows[family] = profile.windows
+            tested_fields[family] = profile.fields
+            tested_operators[family] = profile.operators
+            saturation[family] = profile.saturation
+            # Ưu tiên là phần bù của bão hòa: càng ít khai thác càng đáng thử.
+            priority[family] = round(1.0 - profile.saturation, 4)
             if profile.is_underexplored:
                 # Chưa đủ dữ liệu để kết luận. Giữ nguyên ưu tiên.
                 weights[family] = 1.0
@@ -230,6 +373,15 @@ class ResearchMemory:
                 weight *= 0.5
             weights[family] = round(max(MIN_WEIGHT, min(MAX_WEIGHT, weight)), 4)
 
+        # Trọng số ở hai mức rộng hơn, dùng khi một ứng viên chưa từng thuộc
+        # họ cấu trúc nào đã biết.
+        template_weights = self._weights_by(
+            lambda row: [row.get("template")], target_sharpe=target_sharpe
+        )
+        field_weights = self._weights_by(
+            lambda row: _str_list(row.get("fields_json")), target_sharpe=target_sharpe
+        )
+
         seen_exact: set = set()
         if avoid_duplicates:
             seen_exact = self._existing_exact_fingerprints()
@@ -242,6 +394,12 @@ class ResearchMemory:
             family_weights=weights,
             seen_exact=seen_exact,
             tested_windows=tested_windows,
+            tested_fields=tested_fields,
+            tested_operators=tested_operators,
+            family_saturation=saturation,
+            family_priority=priority,
+            template_weights=template_weights,
+            field_weights=field_weights,
             enabled=True,
         )
 
@@ -288,6 +446,8 @@ class ResearchMemory:
             "operators": profile.operators,
             "is_saturated": profile.is_saturated,
             "is_underexplored": profile.is_underexplored,
+            "saturation": profile.saturation,
+            "confidence": profile.confidence,
         }
 
 

@@ -75,6 +75,8 @@ class AlphaRecord:
     variant_id: Optional[int] = None
     parent_alpha_id: Optional[str] = None
     generation_strategy: str = ""
+    #: Hạt giống ngẫu nhiên của lô sinh. Không có nó thì không tái lập được lô.
+    generation_seed: Optional[int] = None
     fingerprint: Optional[str] = None
     family: Optional[str] = None
 
@@ -122,6 +124,7 @@ CREATE TABLE IF NOT EXISTS alphas (
     variant_id INTEGER,
     parent_alpha_id TEXT,
     generation_strategy TEXT NOT NULL DEFAULT '',
+    generation_seed INTEGER,
     fingerprint TEXT,
     family TEXT,
     created_at TEXT NOT NULL,
@@ -246,6 +249,7 @@ CREATE TABLE IF NOT EXISTS alpha_lineage (
     experiment_id INTEGER REFERENCES experiments(id) ON DELETE SET NULL,
     variant_id INTEGER REFERENCES experiment_variants(id) ON DELETE SET NULL,
     generation_strategy TEXT NOT NULL DEFAULT '',
+    generation_seed INTEGER,
     mutation_type TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
@@ -323,7 +327,8 @@ SCHEMA_COLUMNS = _declared_columns(SCHEMA)
 _ALPHA_COLUMNS = {
     "expression", "status", "attempts", "alpha_id", "score", "self_correlation",
     "prod_correlation", "reject_reason", "error", "run_id", "experiment_id",
-    "variant_id", "parent_alpha_id", "generation_strategy", "fingerprint", "family",
+    "variant_id", "parent_alpha_id", "generation_strategy", "generation_seed",
+    "fingerprint", "family",
 }
 #: Cột lưu dưới dạng JSON, nhận vào là đối tượng Python.
 _ALPHA_JSON_COLUMNS = {"settings": "settings_json", "metrics": "metrics_json"}
@@ -422,6 +427,7 @@ class Database:
         variant_id: Optional[int] = None,
         parent_alpha_id: Optional[str] = None,
         generation_strategy: str = "",
+        generation_seed: Optional[int] = None,
         fingerprints: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> int:
         """Thêm biểu thức vào hàng đợi, bỏ qua bản ghi đã tồn tại.
@@ -445,14 +451,14 @@ class Database:
                     INSERT OR IGNORE INTO alphas (
                         expression, expression_hash, settings_json, status,
                         run_id, experiment_id, variant_id, parent_alpha_id,
-                        generation_strategy, fingerprint, family,
+                        generation_strategy, generation_seed, fingerprint, family,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         cleaned, expression_hash(cleaned, settings), settings_json,
                         Status.PENDING, run_id, experiment_id, variant_id,
-                        parent_alpha_id, generation_strategy,
+                        parent_alpha_id, generation_strategy, generation_seed,
                         meta.get("fingerprint"), meta.get("family"), now, now,
                     ),
                 )
@@ -733,6 +739,7 @@ def _to_record(row: sqlite3.Row) -> AlphaRecord:
         variant_id=row["variant_id"],
         parent_alpha_id=row["parent_alpha_id"],
         generation_strategy=str(row["generation_strategy"] or ""),
+        generation_seed=row["generation_seed"],
         fingerprint=row["fingerprint"],
         family=row["family"],
     )

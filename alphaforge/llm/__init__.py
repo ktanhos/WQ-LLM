@@ -9,9 +9,10 @@ Mô hình ngôn ngữ không bao giờ được phép nộp alpha, sửa cấu h
 thi hành.
 """
 
-from .base import LLMProvider, LLMResponse, NullProvider, get_provider
+from .base import LLMProvider, LLMResponse, NullProvider
 from .claude import ClaudeProvider
 from .ollama import OllamaProvider
+from .registry import PROVIDERS, get_provider
 
 __all__ = [
     "LLMProvider",
@@ -20,4 +21,5 @@ __all__ = [
     "ClaudeProvider",
     "OllamaProvider",
     "get_provider",
+    "PROVIDERS",
 ]

@@ -232,8 +232,9 @@ class ResearchStore:
                 """
                 INSERT INTO alpha_lineage
                 (alpha_id, parent_alpha_id, research_id, hypothesis_id, experiment_id,
-                 variant_id, generation_strategy, mutation_type, source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 variant_id, generation_strategy, generation_seed, mutation_type,
+                 source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(alpha_id) DO UPDATE SET
                     parent_alpha_id = excluded.parent_alpha_id,
                     research_id = excluded.research_id,
@@ -241,13 +242,14 @@ class ResearchStore:
                     experiment_id = excluded.experiment_id,
                     variant_id = excluded.variant_id,
                     generation_strategy = excluded.generation_strategy,
+                    generation_seed = excluded.generation_seed,
                     mutation_type = excluded.mutation_type,
                     source = excluded.source
                 """,
                 (lineage.alpha_id, lineage.parent_alpha_id, lineage.research_id,
                  lineage.hypothesis_id, lineage.experiment_id, lineage.variant_id,
-                 lineage.generation_strategy, lineage.mutation_type, lineage.source,
-                 lineage.created_at),
+                 lineage.generation_strategy, lineage.generation_seed,
+                 lineage.mutation_type, lineage.source, lineage.created_at),
             )
         finally:
             connection.close()

@@ -8,7 +8,6 @@ thuộc vào lớp này.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -88,39 +87,6 @@ class NullProvider(LLMProvider):
                 "Mọi chức năng còn lại của Alpha Forge không cần mô hình ngôn ngữ."
             ),
         )
-
-
-def get_provider(config: Optional[Dict[str, Any]] = None) -> LLMProvider:
-    """Chọn nhà cung cấp theo cấu hình, mặc định là không dùng gì.
-
-    Thứ tự ưu tiên: biến môi trường, rồi tệp cấu hình. Nhà cung cấp không nhận
-    diện được sẽ trả về NullProvider thay vì ném lỗi, để một cấu hình sai không
-    làm hỏng các lệnh không liên quan tới mô hình ngôn ngữ.
-    """
-    config = dict(config or {})
-    provider_name = str(
-        os.environ.get("ALPHAFORGE_LLM_PROVIDER") or config.get("provider") or "none"
-    ).strip().lower()
-
-    if provider_name in ("", "none", "off", "disabled"):
-        return NullProvider()
-
-    model = str(os.environ.get("ALPHAFORGE_LLM_MODEL") or config.get("model") or "")
-    options = {
-        key: value
-        for key, value in config.items()
-        if key not in ("provider", "model")
-    }
-
-    if provider_name == "claude":
-        from .claude import ClaudeProvider
-
-        return ClaudeProvider(model=model, **options)
-    if provider_name == "ollama":
-        from .ollama import OllamaProvider
-
-        return OllamaProvider(model=model, **options)
-    return NullProvider()
 
 
 # ----------------------------------------------------------------------
